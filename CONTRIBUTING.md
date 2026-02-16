@@ -1,6 +1,6 @@
-# General practices:
+# General Practices
 
-- Let's program in English, variables and comments should be in English
-- Use conventional commits for the commit message (INCLUDE Link to conventional commits)
-- Install development tools to standardize code (linter)
-- Create a branch per feature and do a PR to merge
+- Program in English: all variables, functions, and comments should be written in English
+- Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages
+- Use development tools to standardize code (linter, formatter)
+- Create a branch per feature and submit a PR to merge into main
