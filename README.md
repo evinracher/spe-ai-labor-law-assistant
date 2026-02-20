@@ -1,4 +1,4 @@
-# SPE AI Labor Law Assistant
+# AI Labor Law Assistant
 
 An intelligent chatbot powered by Retrieval-Augmented Generation (RAG) that provides guidance and answers questions about Colombian labor law.
 
