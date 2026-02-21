@@ -1,0 +1,4 @@
+- Minimal UI functionalities, we won't have logging nor auth features
+- Local deployment and presentation (initially)
+- Using local DB (Chroma or FAISS)
+- RAG (defined workflow, chat won't answer questions outside context)
