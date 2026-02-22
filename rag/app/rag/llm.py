@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 
 _llm: BaseChatModel | None = None
 
-
 def get_llm() -> BaseChatModel:
     """Return the LLM singleton for the configured provider, creating it on first call."""
     global _llm
