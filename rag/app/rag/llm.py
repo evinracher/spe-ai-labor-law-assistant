@@ -34,7 +34,7 @@ def ask_llm(question: str, settings: "Settings") -> ChatResponse:
         settings:  Application settings (used for trace metadata).
 
     Returns:
-        A fully populated ChatResponse (ok=True, no real retrieval performed).
+        A fully populated ChatResponse (ok=True).
     """
     import uuid
 
