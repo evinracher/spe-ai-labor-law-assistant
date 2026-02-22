@@ -14,15 +14,32 @@ from app.core.config import settings
 if TYPE_CHECKING:
     from app.core.config import Settings
     
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_groq import ChatGroq
-    
-LLM_API_KEY = settings.GROQ_API_KEY if settings.LLM_PROVIDER == "groq" else settings.GEMINI_API_KEY
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-llm = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0.2,
-    api_key=LLM_API_KEY,
-)
+_llm: BaseChatModel | None = None
+
+
+def get_llm() -> BaseChatModel:
+    """Return the LLM singleton for the configured provider, creating it on first call."""
+    global _llm
+    if _llm is None:
+        if settings.LLM_PROVIDER == "groq":
+            _llm = ChatGroq(
+                model="llama-3.1-8b-instant",
+                temperature=0.2,
+                api_key=settings.GROQ_API_KEY,
+            )
+        elif settings.LLM_PROVIDER == "gemini":
+            _llm = ChatGoogleGenerativeAI(
+                model="models/gemini-2.5-flash-lite",
+                temperature=0.2,
+                google_api_key=settings.GEMINI_API_KEY,
+            )
+        else:
+            raise ValueError(f"Unsupported LLM_PROVIDER for get_llm(): '{settings.LLM_PROVIDER}'")
+    return _llm
 
 
 def ask_llm(question: str, settings: "Settings") -> ChatResponse:
@@ -41,7 +58,7 @@ def ask_llm(question: str, settings: "Settings") -> ChatResponse:
     request_id = str(uuid.uuid4())
 
     # TODO: handle out of context in RAG level
-    response = llm.invoke(question)
+    response = get_llm().invoke(question)
     
     answer_text = response.content
     citations = []
