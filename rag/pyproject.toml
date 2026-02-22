@@ -47,6 +47,7 @@ dependencies = [
     # "google-generativeai>=0.7.0",  # Gemini
     # "groq>=0.9.0",                 # Groq
     "langchain-groq>=0.2.0",
+    "langchain-google-genai>=2.0.0",
 ]
 
 [project.optional-dependencies]
