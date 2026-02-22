@@ -1,11 +1,15 @@
 """
 app/rag/llm.py
 ---------------
-LLM integration
+LLM integration module to be used by the RAG.
+
+This module is configurable thought the env variables and support integration with Groq and Gemini LLM provider,
+using the langchain implementation. You need to setup your proper API to use it.
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 from app.api.schemas import Citation, ChatResponse, Trace
@@ -53,8 +57,6 @@ def ask_llm(question: str, settings: "Settings") -> ChatResponse:
     Returns:
         A fully populated ChatResponse (ok=True).
     """
-    import uuid
-
     request_id = str(uuid.uuid4())
 
     # TODO: handle out of context in RAG level
