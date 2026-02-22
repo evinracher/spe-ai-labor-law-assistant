@@ -21,7 +21,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 if TYPE_CHECKING:
     from app.core.config import Settings
-    
+
 
 _llm: BaseChatModel | None = None
 
@@ -50,7 +50,7 @@ def get_llm() -> BaseChatModel:
 def ask_llm(question: str, settings: "Settings") -> ChatResponse:
     """
     Generate an LLM response
-    
+
     Args:
         question:  User question string (already validated by Pydantic).
         settings:  Application settings (used for trace metadata).
@@ -62,7 +62,7 @@ def ask_llm(question: str, settings: "Settings") -> ChatResponse:
 
     # TODO: handle out of context in RAG level
     response = get_llm().invoke(question)
-    
+
     answer_text = response.content
     citations = []
     intent = ""
