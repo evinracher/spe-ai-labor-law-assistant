@@ -15,12 +15,13 @@ from typing import TYPE_CHECKING
 from app.api.schemas import Citation, ChatResponse, Trace
 from app.core.config import settings
 
-if TYPE_CHECKING:
-    from app.core.config import Settings
-    
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+if TYPE_CHECKING:
+    from app.core.config import Settings
+    
 
 _llm: BaseChatModel | None = None
 
