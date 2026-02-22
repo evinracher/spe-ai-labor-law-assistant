@@ -1,7 +1,7 @@
 ---
 name: LLS Issue template
 about: Describe this issue template's purpose here.
-title: 'Issue #{NUMBER} - {TITLE}'
+title: ''
 labels: ''
 assignees: ''
 
