@@ -24,6 +24,7 @@ from fastapi import APIRouter, Request
 from app.api.schemas import ChatRequest, ChatResponse
 from app.core.config import settings
 from app.rag.mock import mock_rag_answer
+from app.rag.llm import ask_llm
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,4 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
     if settings.LLM_PROVIDER == "mock":
         return mock_rag_answer(question=body.question, settings=settings)
 
-    # TODO (milestone 5): wire real providers below.
-    # For now, fall back to mock even if a real provider is configured.
-    logger.warning(
-        "LLM_PROVIDER='%s' is configured but not yet implemented. "
-        "Falling back to mock response.",
-        settings.LLM_PROVIDER,
-    )
-    return mock_rag_answer(question=body.question, settings=settings)
+    return ask_llm(question=body.question, settings=settings)

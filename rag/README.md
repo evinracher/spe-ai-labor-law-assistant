@@ -68,12 +68,20 @@ source .venv/bin/activate        # macOS / Linux
 # .venv\Scripts\activate         # Windows PowerShell
 ```
 
-### 3 — Install dependencies
+### 3 — Install dependencies and git hooks
 
 ```bash
-pip install --upgrade pip
-pip install -e ".[dev]"
+make setup
 ```
+
+This installs all dependencies (`pip install -e ".[dev]"`) **and** activates the pre-commit hooks (ruff linter + formatter) that run automatically on every `git commit`.
+
+> **Manual alternative** (if `make` is not available):
+> ```bash
+> pip install --upgrade pip
+> pip install -e ".[dev]"
+> pre-commit install
+> ```
 
 ### 4 — Configure environment
 
