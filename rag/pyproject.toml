@@ -46,6 +46,8 @@ dependencies = [
     # --- LLM providers (milestone 5) ---
     # "google-generativeai>=0.7.0",  # Gemini
     # "groq>=0.9.0",                 # Groq
+    "langchain-groq>=0.2.0",
+    "langchain-google-genai>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +57,7 @@ dev = [
     "httpx>=0.27.0",       # TestClient
     "ruff>=0.4.0",
     "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
 ]
 
 [project.scripts]
