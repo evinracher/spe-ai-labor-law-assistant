@@ -1,10 +1,13 @@
 # Colombian Labor Law RAG Backend
 
-Strict Retrieval-Augmented Generation (RAG) chatbot for **Colombian labor law** (*derecho laboral colombiano*).
+Intelligent chatbot with Retrieval-Augmented Generation (RAG) for **Colombian labor law** (*derecho laboral colombiano*) and general question answering capabilities.
 
-> **Milestone 1 — Mock API only.**  
-> The server is fully runnable and exposes the final API contract.  
-> Document ingestion, vector retrieval, and LLM generation are **not yet implemented** (see TODOs in source files and the [Next milestone checklist](#next-milestone-checklist) below).
+> **Current Milestone — Intent Classification & General Q&A**  
+> The server implements LangGraph-based intent classification to route questions between:
+> - **Labor law queries**: RAG-based retrieval from Colombian labor law corpus (in development)
+> - **General questions**: Direct LLM-based question answering (fully functional)
+> 
+> Vector retrieval and full RAG pipeline are **partially implemented** (see [Current Status](#current-status) and [Next Steps](#next-steps) below).
 
 ---
 
@@ -12,12 +15,15 @@ Strict Retrieval-Augmented Generation (RAG) chatbot for **Colombian labor law** 
 
 | Property | Value |
 |---|---|
-| Domain | Colombian labor law (PDF/HTML/TXT corpus) |
-| Strictness | Answers **only** from retrieved context — never hallucinates |
-| Safe response | `"No aparece en el contexto."` + empty citations |
+| Domain | Colombian labor law (PDF/HTML/TXT corpus) + general knowledge |
+| Intent Classification | Automatic routing between RAG and general Q&A |
+| RAG Strictness | Answers **only** from retrieved context — never hallucinates |
+| Safe response (RAG) | `"No aparece en el contexto."` + empty citations |
+| General Q&A | Direct answers for non-labor-law questions |
 | Embeddings | Local sentence-transformers (no paid API required) |
 | Vector DB | ChromaDB (persistent local directory) |
-| LLM providers | Gemini, Groq, local (Ollama), or **mock** (default) |
+| LLM providers | Groq (default), Gemini, local (Ollama), or mock |
+| Workflow Engine | LangGraph for agent orchestration |
 | Frontend | React app calling `POST /chat` — no auth required |
 
 ---
@@ -25,7 +31,7 @@ Strict Retrieval-Augmented Generation (RAG) chatbot for **Colombian labor law** 
 ## Project structure
 
 ```
-backend/
+rag/
 ├── app/
 │   ├── main.py            # FastAPI app + CORS + startup/shutdown hooks
 │   ├── api/
@@ -34,12 +40,16 @@ backend/
 │   ├── core/
 │   │   └── config.py      # Pydantic Settings (env vars / .env)
 │   └── rag/
-│       └── mock.py        # Deterministic mock RAG responder
+│       ├── agents.py      # LangGraph workflow with intent classification
+│       ├── llm.py         # LLM provider implementations
+│       ├── prompts.py     # System prompts for classification and Q&A
+│       └── mock.py        # Deterministic mock RAG responder (fallback)
 ├── storage/               # ChromaDB persistent directory (created at runtime)
 ├── tests/
 │   └── test_api.py        # Smoke tests with FastAPI TestClient
 ├── .env.example
 ├── .gitignore
+├── Makefile               # Development commands
 ├── pyproject.toml
 └── README.md              # ← you are here
 ```
@@ -239,15 +249,56 @@ curl -s -X POST http://localhost:8000/chat \
 | `DATA_DIR` | `./data` | Corpus source files directory |
 | `VECTOR_DB` | `chroma` | Vector database backend |
 | `CHROMA_DIR` | `./storage/chroma` | ChromaDB persistent directory |
-| `LLM_PROVIDER` | `mock` | `mock` / `gemini` / `groq` / `local` |
+| `LLM_PROVIDER` | `groq` | `groq` (default) / `gemini` / `local` / `mock` |
 | `GEMINI_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=gemini` |
-| `GROQ_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=groq` |
+| `GROQ_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=groq` (**required for default setup**) |
 | `EMBEDDINGS_PROVIDER` | `local` | Embeddings backend |
 | `EMBEDDINGS_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Multilingual model |
 
+**Note**: The default configuration uses Groq's llama-3.1-8b-instant model. You must provide a `GROQ_API_KEY` for the chatbot to function. Get your API key at https://console.groq.com/
+
 ---
 
-## Next milestone checklist
+## Current Status
+
+### ✅ Implemented Features
+
+1. **LangGraph Agent Workflow** (`app/rag/agents.py`)
+   - Intent classification node: Determines if a question is about labor law or general knowledge
+   - RAG node: Handles labor law queries (currently uses mock data, will integrate with vector DB)
+   - General search node: Handles general questions with direct LLM responses
+   - In-memory conversation history with persistent conversation IDs
+   - Conditional routing based on intent classification
+
+2. **LLM Integration** (`app/rag/llm.py`)
+   - Groq client (llama-3.1-8b-instant) — fully functional
+   - Gemini client — fully functional
+   - Configurable via `LLM_PROVIDER` environment variable
+
+3. **Intent Classification**
+   - Automatically routes questions to appropriate handler:
+     - `domainSearch`: Labor law specific questions → RAG pipeline
+     - `summarize`: Summarization requests → RAG pipeline
+     - `compare`: Comparison questions → RAG pipeline
+     - `generalSearch`: General knowledge questions → Direct LLM
+
+4. **API Endpoints**
+   - `GET /health`: Health check
+   - `POST /chat`: Chat endpoint with intent-aware routing
+   - Full request/response validation with Pydantic v2
+
+5. **Conversation Management**
+   - Persistent conversation threads using LangGraph checkpointer
+   - Conversation ID-based message history
+   - Automatic context retention across multiple questions
+
+### 🚧 In Progress / TODO
+
+---
+
+## Next Steps
+
+The following features are planned for upcoming milestones:
 
 1. **Corpus ingestion pipeline** (`app/rag/ingest.py`)  
    Load PDF (pypdf), HTML (BeautifulSoup), and TXT files from `DATA_DIR`; normalize text; split into overlapping chunks (≈ 512 tokens, 64-token overlap); embed with sentence-transformers; persist to ChromaDB at `CHROMA_DIR`.
@@ -256,19 +307,31 @@ curl -s -X POST http://localhost:8000/chat \
    Wrap `chromadb.PersistentClient`; create/load the `labor_law` collection; expose `similarity_search(query, top_k)` returning `List[Citation]`.
 
 3. **Local embeddings service** (`app/rag/embeddings.py`)  
-   Load `settings.EMBEDDINGS_MODEL` once at startup (cache in module); expose `embed(text) -> List[float]`.
+   Load `settings.EMBEDDINGS_MODEL` once at startup (cache in module); expose `embed(text) -> List[float]`. Use sentence-transformers multilingual model.
 
-4. **`POST /ingest` endpoint**  
-   Trigger the ingestion pipeline on demand (or add a CLI script `python -m app.ingest`).
+4. **`POST /ingest` endpoint** (optional)  
+   Trigger the ingestion pipeline on demand, or add a CLI script `python -m app.ingest` to populate the vector database.
 
-5. **LangGraph RAG workflow** (`app/rag/pipeline.py`)  
-   Nodes: `classify_intent → retrieve → generate → critic → finalize`. Wire `mock_rag_answer` as the fallback leaf. Make the graph async-compatible for FastAPI.
+5. **Full RAG retrieval in `rag_node`** (`app/rag/agents.py`)  
+   Replace mock responses with actual vector similarity search. Query ChromaDB, retrieve top-k relevant chunks, format as context for the LLM prompt.
 
-6. **LLM provider clients** (`app/rag/llm/`)  
-   Implement `GeminiClient`, `GroqClient`, and `LocalClient` (Ollama). Route via `settings.LLM_PROVIDER` in `routes.py`.
+6. **Enhanced strict prompt template** (`app/rag/prompts.py`)  
+   Strengthen system prompt: *"Responde ÚNICAMENTE basándote en los fragmentos proporcionados. Si la información no está en los fragmentos, responde exactamente: 'No aparece en el contexto.' sin agregar nada más."*  
+   Ensure the RAG node never hallucinates beyond retrieved context.
 
-7. **Strict prompt template** (`app/rag/prompts.py`)  
-   System prompt: *"Responde ÚNICAMENTE basándote en los fragmentos proporcionados. Si la información no está en los fragmentos, responde exactamente: 'No aparece en el contexto.' sin agregar nada más."*
+7. **Citation extraction and formatting**  
+   Parse LLM responses to extract source references, page numbers, and snippets. Return properly formatted `Citation` objects in the API response with actual document sources.
 
-8. **Integration tests for retrieval + generation** (`tests/test_pipeline.py`)  
-   Test that a question whose answer IS in the corpus gets ≥ 1 citation; test that an out-of-domain question gets `"No aparece en el contexto."` and `citations == []`.
+8. **Local LLM support** (Ollama integration)  
+   Implement `LocalClient` for `LLM_PROVIDER=local` to support offline/local models.
+
+9. **Integration tests for full RAG pipeline** (`tests/test_pipeline.py`)  
+   - Test that a labor law question gets citations from the corpus
+   - Test that an out-of-domain question triggers general search
+   - Test that unavailable information returns `"No aparece en el contexto."`
+   - Test conversation history retention
+
+10. **Performance optimization**  
+    - Cache embeddings for common queries
+    - Implement async vector search
+    - Add request rate limiting and response caching
