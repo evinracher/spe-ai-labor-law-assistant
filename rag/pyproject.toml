@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spe-labor-law-rag-backend"
 version = "0.1.0"
-description = "Strict RAG chatbot for Colombian labor law — backend (milestone 1 mock)"
+description = "RAG chatbot for Colombian labor law — backend (milestone 1 mock)"
 readme = "README.md"
 requires-python = ">=3.11"
 
