@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { sendMessageRequest, clearConversationId } from "../services/chatService";
+import { sendMessageRequest, getOrCreateConversationId } from "../services/chatService";
 import {
   ThemeProvider,
   CssBaseline,
@@ -41,6 +41,7 @@ export default function App() {
   }, [messages, scrollToBottom]);
 
   const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const conversationId = getOrCreateConversationId();
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
@@ -70,7 +71,7 @@ export default function App() {
     setMessages((prev) => [...prev, typingMsg]);
 
     try {
-      const answer = await sendMessageRequest(text);
+      const answer = await sendMessageRequest(text, conversationId);
       const assistantMsg: Message = {
         id: genId(),
         role: "assistant",
@@ -113,7 +114,6 @@ export default function App() {
   const handleClearChat = () => {
     setMessages([]);
     setInputText("");
-    clearConversationId();
     setSnackbar({ open: true, message: "Chat limpiado.", severity: "success" });
     setTimeout(() => inputRef.current?.focus(), 50);
   };
