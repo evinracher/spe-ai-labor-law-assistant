@@ -52,6 +52,37 @@ export async function sendMessageRequest(
     const data: ChatResponse = await response.json();
     return data.answer;
   }
-
+  
   return await mockResponse();
+}
+
+function generateUUID(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  // Fallback simple UUIDv4-ish generator
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replaceAll(/[xy]/g, function (c) {
+    const r = Math.trunc(Math.random() * 16);
+    const v = c === 'x' ? r : (r % 4) + 8;
+    return v.toString(16);
+  });
+}
+
+export function getOrCreateConversationId(): string {
+  const key = 'conversation_id';
+  try {
+    if (typeof localStorage !== 'undefined') {
+      let id = localStorage.getItem(key);
+      if (!id) {
+        id = generateUUID();
+        localStorage.setItem(key, id);
+      }
+      return id;
+    }
+  } catch {
+    // ignore and fallback
+  }
+  
+  return generateUUID();
 }
