@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Annotated, Literal
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_groq import ChatGroq
-from langgraph.graph import END, START, StateGraph
-from pydantic import Field
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph, add_messages
+from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from app.api.schemas import ChatResponse, Trace
 from app.core.config import settings
+from app.rag.prompts import CLASSIFIER_PROMPT, GENERAL_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -19,110 +22,72 @@ classifier_LLM = ChatGroq(
     temperature=0.2,
     api_key=settings.GROQ_API_KEY,
 )
-print("✅ classifier_LLM listo:", classifier_LLM.model_name)
-
-classifier_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """
-     You are a classifier. Your tasks is to classifier the user intention
-     choose:
-     - 'domainSearch' if the user is asking about Colombian Labor Laws
-     - 'summarize' if the user is asking to summarize a document from the Colombian Labor Law domain (e.g.: a law article, a law)
-     - 'compare' if the user is asking to compare two or more documents from the Colombian Labor Law domain
-     - 'generalSearch' if the user is asking a general question
-     Answer only with the JSOM scheme asked.
-    """,
-        ),
-        ("user", "question: {question}"),
-    ]
-)
-
-general_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """
-     Answer the user question in Spanish. At the end of the answer, add a note that says:
-
-     **Nota:** Soy un asistente especializado en derecho laboral colombiano. Esta respuesta se proporciona a nivel general y puede no reflejar información actualizada o especializada sobre este tema. Se recomienda consultar una fuente experta o profesional en el área correspondiente.
-    """,
-        ),
-        ("user", "question: {question}"),
-    ]
-)
+print("✅ classifier_LLM ready:", classifier_LLM.model_name)
 
 
-class QuestionState(TypedDict):
-    question: str
-
-
-class ClassifyState(TypedDict):
-    question: str
+class ClassifierOutput(BaseModel):
+    question: str = Field(description="The original user question.")
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch"] = Field(
         description="User intent."
     )
 
 
-class ResponseState(TypedDict):
+class GraphState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
     question: str
-    intent: Literal["domainSearch", "summarize", "compare", "generalSearch"] = Field(
-        description="User intent."
-    )
-    response: str
+    intent: Literal["domainSearch", "summarize", "compare", "generalSearch"]
 
 
-classifier_chain = classifier_prompt | classifier_LLM.with_structured_output(ClassifyState)
-general_chain = general_prompt | classifier_LLM
+classifier_chain = CLASSIFIER_PROMPT | classifier_LLM.with_structured_output(ClassifierOutput)
 
 
-def classifier(state: QuestionState):
-    question = state["question"]
-    classification = classifier_chain.invoke({"question": question})
-    return {"question": classification["question"], "intent": classification["intent"]}
+def classifier_node(state: GraphState):
+    question = state["messages"][-1].content
+    classification_result = classifier_chain.invoke({"question": question})
+    return {"question": classification_result.question, "intent": classification_result.intent}
 
 
-def general_search(state: ClassifyState):
-    question = state["question"]
-    res = general_chain.invoke({"question": question})
+def general_search_node(state: GraphState):
+    messages_for_llm = [GENERAL_SYSTEM_PROMPT] + state["messages"]
+    res = classifier_LLM.invoke(messages_for_llm)
     print("GENERAL SEARCH RESULT:", res)
+    return {"messages": [res]}
 
-    return {"response": res.content}
+
+def rag_node(state: GraphState):
+    # In a real RAG, you'd do retrieval here based on state["question"] and state["intent"]
+    # For demonstration, we'll just have the LLM respond based on current messages.
+    messages_for_llm = state["messages"]
+    res = classifier_LLM.invoke(messages_for_llm)
+    print("RAG REQUEST RESULT:", state["question"], state["intent"])
+    return {"messages": [res]}
 
 
-def rag(state: ClassifyState):
-    question = state["question"]
+def classify_route(state: GraphState) -> Literal["rag_node", "general_search_node"]:
     intent = state["intent"]
-    print("RAG REQUEST RESULT:", question, intent)
-
-    res = classifier_LLM.invoke(f"Say which intent is this one: {intent}")
-
-    return {"response": res.content}
+    return "general_search_node" if intent == "generalSearch" else "rag_node"
 
 
-def classify_route(state: ClassifyState) -> Literal["rag", "general_search"]:
-    intent = state["intent"]
-    return "general_search" if intent == "generalSearch" else "rag"
+graph = StateGraph(GraphState)
+
+graph.add_node("classifier_node", classifier_node)
+graph.add_node("general_search_node", general_search_node)
+graph.add_node("rag_node", rag_node)
+
+graph.add_edge(START, "classifier_node")
+graph.add_conditional_edges("classifier_node", classify_route)
+graph.add_edge("rag_node", END)
+graph.add_edge("general_search_node", END)
+
+memory = InMemorySaver()
+chat = graph.compile(checkpointer=memory)
 
 
-graph = StateGraph(ResponseState)
-
-graph.add_node("classifier", classifier)
-graph.add_node("general_search", general_search)
-graph.add_node("rag", rag)
-
-graph.add_edge(START, "classifier")
-graph.add_conditional_edges("classifier", classify_route)
-graph.add_edge("rag", END)
-graph.add_edge("general_search", END)
-
-chat = graph.compile()
-
-
-def ask_chat(question: str, settings: Settings):
-    response = chat.invoke({"question": question})["response"]
-    print(type(response))
+def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
+    config = {"configurable": {"thread_id": conversation_id}}
+    initial_messages = {"messages": [HumanMessage(content=question)]}
+    messages = chat.invoke(initial_messages, config=config)["messages"]
+    response = messages[-1].content
     answer_text = response
     citations = []
     intent = ""
