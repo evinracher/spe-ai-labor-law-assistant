@@ -46,7 +46,6 @@ export async function sendMessageRequest(
     });
 
     if (!response.ok) {
-      // TODO: handle message too long (min: 5 characters)
       throw new Error(`Backend error: ${response.status} ${response.statusText}`);
     }
 
