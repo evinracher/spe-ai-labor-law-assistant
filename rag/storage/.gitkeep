@@ -1,0 +1,6 @@
+# Placeholder — this directory will hold the persistent ChromaDB collection.
+# ChromaDB will create its files here on first ingestion run.
+#
+# TODO (milestone 2): after implementing the ingestion pipeline, run:
+#   python -m app.ingest
+# to populate this directory from DATA_DIR.

@@ -1,0 +1,114 @@
+"""
+app/main.py
+-----------
+Application factory and entry point for the Colombian Labor Law RAG backend.
+
+Run with:
+    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+Or via the helper script in pyproject.toml:
+    python -m app.main
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.routes import router
+from app.core.config import settings
+
+# ---------------------------------------------------------------------------
+# Logging — basic config (replace with structlog/loguru in production)
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    stream=sys.stdout,
+    level=logging.DEBUG if settings.ENV == "dev" else logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Colombian Labor Law RAG Assistant",
+    description=(
+        "Strict Retrieval-Augmented Generation chatbot for Colombian labor law. "
+        "Answers are generated **only** from an approved local corpus. "
+        "If the requested information is not in the corpus, the system replies: "
+        "'No aparece en el contexto.' — never hallucinates.\n\n"
+        "**Status:** Milestone 1 — Mock API only. "
+        "Ingestion, retrieval and LLM integration are pending."
+    ),
+    version="0.1.0",
+    docs_url="/docs" if settings.ENV == "dev" else None,
+    redoc_url="/redoc" if settings.ENV == "dev" else None,
+    openapi_url="/openapi.json" if settings.ENV == "dev" else None,
+)
+
+# ---------------------------------------------------------------------------
+# CORS — permissive for local development.
+# TODO (milestone 5): tighten allowed origins for any networked deployment.
+# ---------------------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if settings.ENV == "dev" else [],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
+)
+
+# ---------------------------------------------------------------------------
+# Routers
+# ---------------------------------------------------------------------------
+app.include_router(router, prefix="")
+
+# TODO (milestone 2): register ingestion router
+# from app.api.ingest_routes import ingest_router
+# app.include_router(ingest_router, prefix="/ingest")
+
+
+# ---------------------------------------------------------------------------
+# Startup / shutdown events
+# ---------------------------------------------------------------------------
+
+
+@app.on_event("startup")
+async def on_startup() -> None:  # noqa: RUF029 (async is intentional)
+    logger.info(
+        "Starting Colombian Labor Law RAG backend | env=%s | provider=%s | vector_db=%s",
+        settings.ENV,
+        settings.LLM_PROVIDER,
+        settings.VECTOR_DB,
+    )
+    logger.info("CHROMA_DIR=%s | DATA_DIR=%s", settings.CHROMA_DIR, settings.DATA_DIR)
+    # TODO (milestone 2): initialize ChromaDB client and verify/create collection.
+    # TODO (milestone 3): warm up sentence-transformers model on startup.
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:  # noqa: RUF029
+    logger.info("Shutting down Colombian Labor Law RAG backend.")
+    # TODO (milestone 2): flush any pending ChromaDB writes.
+
+
+# ---------------------------------------------------------------------------
+# Dev convenience runner
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=(settings.ENV == "dev"),
+        log_level="debug" if settings.ENV == "dev" else "info",
+    )

@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spe-labor-law-rag-backend"
+version = "0.1.0"
+description = "Strict RAG chatbot for Colombian labor law — backend (milestone 1 mock)"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    # --- Web framework ---
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+
+    # --- Configuration ---
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "python-dotenv>=1.0.1",
+
+    # --- HTTP client (for future LLM provider calls) ---
+    "httpx>=0.27.0",
+
+    # ---------------------------------------------------------------
+    # Future milestone dependencies (commented out until needed)
+    # ---------------------------------------------------------------
+
+    # --- Embeddings (milestone 2) ---
+    # "sentence-transformers>=3.0.0",
+    # "torch>=2.3.0",          # CPU-only: add --extra-index-url for wheels
+
+    # --- Vector DB (milestone 2) ---
+    # "chromadb>=0.5.0",
+
+    # --- Document loaders (milestone 2) ---
+    # "pypdf>=4.2.0",          # PDF
+    # "beautifulsoup4>=4.12.0", # HTML
+    # "lxml>=5.2.0",            # HTML parser backend
+
+    # --- LangChain + LangGraph (milestone 3 / 4) ---
+    # "langchain>=0.2.0",
+    # "langchain-community>=0.2.0",
+    # "langgraph>=0.1.0",
+
+    # --- LLM providers (milestone 5) ---
+    # "google-generativeai>=0.7.0",  # Gemini
+    # "groq>=0.9.0",                 # Groq
+    "langchain-groq>=0.2.0",
+    "langchain-google-genai>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",       # TestClient
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+]
+
+[project.scripts]
+serve = "app.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+# ------------------------------------------------------------------ ruff
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "RUF"]
+ignore = ["E501"]
+
+# ------------------------------------------------------------------ mypy
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+
+# ------------------------------------------------------------------ pytest
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
