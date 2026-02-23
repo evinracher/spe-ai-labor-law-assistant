@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { sendMessageRequest } from "../services/chatService";
+import { sendMessageRequest, clearConversationId } from "../services/chatService";
 import {
   ThemeProvider,
   CssBaseline,
@@ -113,6 +113,7 @@ export default function App() {
   const handleClearChat = () => {
     setMessages([]);
     setInputText("");
+    clearConversationId();
     setSnackbar({ open: true, message: "Chat limpiado.", severity: "success" });
     setTimeout(() => inputRef.current?.focus(), 50);
   };
