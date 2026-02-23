@@ -10,10 +10,7 @@ modifying.
 
 from __future__ import annotations
 
-from uuid import UUID
-
 from pydantic import BaseModel, Field, field_validator
-
 
 # ============================================================== Request models
 
@@ -23,7 +20,6 @@ class ChatRequest(BaseModel):
 
     question: str = Field(
         ...,
-        min_length=5,
         max_length=2_000,
         description="User question in Spanish about Colombian labor law.",
         examples=["¿Cuántos días de vacaciones tiene un trabajador en Colombia?"],
