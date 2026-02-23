@@ -23,8 +23,8 @@ from fastapi import APIRouter, Request
 
 from app.api.schemas import ChatRequest, ChatResponse
 from app.core.config import settings
+from app.rag.agents import ask_chat
 from app.rag.mock import mock_rag_answer
-from app.rag.llm import ask_llm
 
 logger = logging.getLogger(__name__)
 
@@ -94,4 +94,4 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
     if settings.LLM_PROVIDER == "mock":
         return mock_rag_answer(question=body.question, settings=settings)
 
-    return ask_llm(question=body.question, settings=settings)
+    return ask_chat(question=body.question, settings=settings)
