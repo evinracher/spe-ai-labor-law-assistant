@@ -19,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.core.config import settings
+from rag.app.db.chroma import get_chroma_client
+
 
 # ---------------------------------------------------------------------------
 # Logging — basic config (replace with structlog/loguru in production)
@@ -89,6 +91,11 @@ async def on_startup() -> None:  # noqa: RUF029 (async is intentional)
     )
     logger.info("CHROMA_DIR=%s | DATA_DIR=%s", settings.CHROMA_DIR, settings.DATA_DIR)
     # TODO (milestone 2): initialize ChromaDB client and verify/create collection.
+    chroma_client = get_chroma_client()
+    collection = chroma_client.get_or_create_collection(name="labor_law")
+    app.state.chroma_client = chroma_client
+    app.state.collection = collection
+    logger.info("ChromaDB ready | collection=%s | docs=%d", collection.name, collection.count())
     # TODO (milestone 3): warm up sentence-transformers model on startup.
 
 

@@ -31,12 +31,12 @@ dependencies = [
     # "torch>=2.3.0",          # CPU-only: add --extra-index-url for wheels
 
     # --- Vector DB (milestone 2) ---
-    # "chromadb>=0.5.0",
+    "chromadb>=0.5.0",
 
     # --- Document loaders (milestone 2) ---
-    # "pypdf>=4.2.0",          # PDF
-    # "beautifulsoup4>=4.12.0", # HTML
-    # "lxml>=5.2.0",            # HTML parser backend
+    "pypdf>=4.2.0",          # PDF
+    "beautifulsoup4>=4.12.0", # HTML
+    "lxml>=5.2.0",            # HTML parser backend
 
     # --- LangChain + LangGraph (milestone 3 / 4) ---
     # "langchain>=0.2.0",
