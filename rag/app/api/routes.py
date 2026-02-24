@@ -90,8 +90,9 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
         settings.LLM_PROVIDER,
         len(body.question),
     )
-
+    print("🚨 PROVIDER ACTUAL:", settings.LLM_PROVIDER)
     if settings.LLM_PROVIDER == "mock":
+        print("🧪 ENTRANDO A MOCK")
         return mock_rag_answer(question=body.question, settings=settings)
-
+    print("🔥 ENTRANDO A ask_chat")
     return ask_chat(question=body.question, settings=settings, conversation_id=body.conversation_id)
