@@ -25,6 +25,7 @@ classifier_LLM = ChatGroq(
 print("✅ classifier_LLM ready:", classifier_LLM.model_name)
 
 
+
 class ClassifierOutput(BaseModel):
     question: str = Field(description="The original user question.")
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch"] = Field(
@@ -36,6 +37,7 @@ class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     question: str
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch"]
+    is_valid: bool
 
 
 classifier_chain = CLASSIFIER_PROMPT | classifier_LLM.with_structured_output(ClassifierOutput)
@@ -53,6 +55,57 @@ def general_search_node(state: GraphState):
     print("GENERAL SEARCH RESULT:", res)
     return {"messages": [res]}
 
+def domain_search_node(state: GraphState):
+    question = state["question"]
+
+    prompt = f"""
+    Eres un experto en derecho laboral colombiano.
+    Responde la siguiente pregunta de forma precisa:
+
+    {question}
+    """
+
+    response = classifier_LLM.invoke(prompt)
+
+    return {
+        "messages": [response]
+    }
+
+def summarize_node(state: GraphState):
+    question = state["question"]
+
+    prompt = f"""
+    Resume el siguiente contenido jurídico de manera clara y estructurada:
+
+    {question}
+    """
+
+    response = classifier_LLM.invoke(prompt)
+
+    return {
+        "messages": [response]
+    }
+
+def compare_node(state: GraphState):
+    question = state["question"]
+
+    prompt = f"""
+    Compara los siguientes conceptos jurídicos de manera estructurada:
+
+    {question}
+
+    Organiza la respuesta en:
+    - Definición
+    - Diferencias clave
+    - Implicaciones legales
+    """
+
+    response = classifier_LLM.invoke(prompt)
+
+    return {
+        "messages": [response]
+    }
+
 
 def rag_node(state: GraphState):
     # In a real RAG, you'd do retrieval here based on state["question"] and state["intent"]
@@ -62,25 +115,84 @@ def rag_node(state: GraphState):
     print("RAG REQUEST RESULT:", state["question"], state["intent"])
     return {"messages": [res]}
 
+def validate_node(state: GraphState):
+    answer = state["messages"][-1].content
 
-def classify_route(state: GraphState) -> Literal["rag_node", "general_search_node"]:
+    # lógica básica (luego será con LLM)
+    is_valid = "No sé" not in answer
+
+    return {
+        "is_valid": is_valid
+    }
+
+def validate_route(state: GraphState) -> Literal["rag_node", "integrate_node"]:
+    if state["is_valid"]:
+        return "integrate_node"
+    return "rag_node"
+
+def integrate_node(state: GraphState):
+    answer = state["messages"][-1].content
+
+    return {
+        "answer": answer,
+        "question": state["question"],
+        "intent": state["intent"],
+        "citations": []
+    }
+
+
+def classify_route(state: GraphState) -> Literal["domain_search_node", "summarize_node", "compare_node", "general_search_node"]:
     intent = state["intent"]
-    return "general_search_node" if intent == "generalSearch" else "rag_node"
+    if intent == "domainSearch":
+        return "domain_search_node"
+    elif intent == "summarize":
+        return "summarize_node"
+    elif intent == "compare":
+        return "compare_node"
+    else:
+        return "general_search_node"
 
 
 graph = StateGraph(GraphState)
 
 graph.add_node("classifier_node", classifier_node)
+graph.add_node("domain_search_node", domain_search_node)
+graph.add_node("summarize_node", summarize_node)
+graph.add_node("compare_node", compare_node)
 graph.add_node("general_search_node", general_search_node)
+graph.add_node("validate_node", validate_node)
+graph.add_node("integrate_node", integrate_node)
 graph.add_node("rag_node", rag_node)
 
 graph.add_edge(START, "classifier_node")
 graph.add_conditional_edges("classifier_node", classify_route)
-graph.add_edge("rag_node", END)
-graph.add_edge("general_search_node", END)
+
+graph.add_edge("domain_search_node", "rag_node")
+graph.add_edge("summarize_node", "rag_node")
+graph.add_edge("compare_node", "rag_node")
+graph.add_edge("general_search_node", "validate_node")
+
+graph.add_edge("rag_node", "validate_node")
+
+graph.add_conditional_edges("validate_node", validate_route)
+
+graph.add_edge("integrate_node", END)
+
+
 
 memory = InMemorySaver()
 chat = graph.compile(checkpointer=memory)
+"""""
+# ----------------------------------------
+# Generar diagrama Mermaid del grafo
+# ----------------------------------------
+
+if __name__ == "__main__":
+    mermaid_code = chat.get_graph().draw_mermaid()
+    print("\n====== MERMAID GRAPH ======\n")
+    print(mermaid_code)
+"""
+
 
 
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
