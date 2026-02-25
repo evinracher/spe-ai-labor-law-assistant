@@ -39,6 +39,7 @@ class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     question: str
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch"]
+    rag_prompt: str  # TODO: investigate a better way to connect the nodes, maybe RAG should be a tool that searches the corpus and returns the relevant information to the intent nodes, instead of passing the prompt through the state
     is_valid: bool
 
 
@@ -62,65 +63,69 @@ def domain_search_node(state: GraphState):
     print(f"{_RED}[DEBUG]: domain_search_node{_RESET}")
     question = state["question"]
 
-    prompt = f"""
-    Eres un experto en derecho laboral colombiano.
-    Responde la siguiente pregunta de forma precisa:
+    rag_prompt = (
+        f"Perform a similarity search in the legal document corpus "
+        f"for the following concept or question: '{question}'. "
+        f"Using the retrieved fragments, answer precisely as an expert "
+        f"in Colombian labor law."
+    )
 
-    {question}
-    """
-
-    response = grop_LLM.invoke(prompt)
-    return {"messages": [response]}
+    return {"rag_prompt": rag_prompt}
 
 
 def summarize_node(state: GraphState):
     print(f"{_RED}[DEBUG]: summarize_node{_RESET}")
     question = state["question"]
 
-    prompt = f"""
-    Resume el siguiente contenido jurídico de manera clara y estructurada:
+    rag_prompt = (
+        f"Perform a similarity search in the legal document corpus "
+        f"related to: '{question}'. "
+        f"Using the retrieved fragments, generate a clear and structured summary "
+        f"of the legal content found."
+    )
 
-    {question}
-    """
-
-    response = grop_LLM.invoke(prompt)
-    return {"messages": [response]}
+    return {"rag_prompt": rag_prompt}
 
 
 def compare_node(state: GraphState):
     question = state["question"]
     print(f"{_RED}[DEBUG]: compare_node{_RESET}")
 
-    prompt = f"""
-    Compara los siguientes conceptos jurídicos de manera estructurada:
+    rag_prompt = (
+        f"Perform a similarity search in the legal document corpus "
+        f"to retrieve information about the legal concepts present in: '{question}'. "
+        f"Using the retrieved fragments, compare those concepts in a structured way, "
+        f"organizing the response into: Definition, Key differences, and Legal implications."
+    )
 
-    {question}
-
-    Organiza la respuesta en:
-    - Definición
-    - Diferencias clave
-    - Implicaciones legales
-    """
-
-    response = grop_LLM.invoke(prompt)
-    print(response)
-    return {"messages": [response]}
+    return {"rag_prompt": rag_prompt}
 
 
+# TODO: the answer shouldn't include details about the similarity search, corpus or anything technical.
+# only give the final answer to the user
+# this could be a tool: normalize_answer (removes technical details from the answer and leaves only the final answer to the user)
 def rag_node(state: GraphState):
-    # In a real RAG, you'd do retrieval here based on state["question"] and state["intent"]
-    # For demonstration, we'll just have the LLM respond based on current messages.
-    messages_for_llm = state["messages"]
-    res = grop_LLM.invoke(messages_for_llm)
-    print("RAG REQUEST RESULT:", state["question"], state["intent"])
+    print(f"{_RED}[DEBUG]: rag_node — intent={state['intent']}{_RESET}")
+    rag_prompt = state.get("rag_prompt", "")
+
+    if rag_prompt:
+        # Use the prompt built by the upstream intent node (domain/summarize/compare)
+        print(f"{_RED}[DEBUG]: rag_node using rag_prompt: {rag_prompt}{_RESET}")
+        full_prompt = (
+            rag_prompt + "\n\nIMPORTANT: Your response must be written entirely in Spanish."
+        )
+        res = grop_LLM.invoke(full_prompt)
+    else:
+        # Fallback: use raw conversation messages (e.g. when coming from validate_route retry)
+        res = grop_LLM.invoke(state["messages"])
+
     return {"messages": [res]}
 
 
 def validate_node(state: GraphState):
     answer = state["messages"][-1].content
     print(f"{_RED}[DEBUG]: validate_node{_RESET}")
-    print(answer)
-    # lógica básica (luego será con LLM)
+    # TODO: implement the actual validation logic.
     is_valid = "No sé" not in answer
 
     return {"is_valid": is_valid}
@@ -128,14 +133,16 @@ def validate_node(state: GraphState):
 
 def validate_route(state: GraphState) -> Literal["rag_node", "integrate_node"]:
     if state["is_valid"]:
+        print(f"{_RED}[DEBUG]: validate_node — answer is valid{_RESET}")
         return "integrate_node"
+
+    print(f"{_RED}[DEBUG]: validate_node — answer is NOT valid, will retry with RAG node{_RESET}")
     return "rag_node"
 
 
 def integrate_node(state: GraphState):
     answer = state["messages"][-1].content
     print(f"{_RED}[DEBUG]: integrate_node{_RESET}")
-    print(answer)
     return {
         "answer": answer,
         "question": state["question"],
