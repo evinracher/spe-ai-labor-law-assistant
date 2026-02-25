@@ -17,13 +17,15 @@ from app.rag.prompts import CLASSIFIER_PROMPT, GENERAL_SYSTEM_PROMPT
 if TYPE_CHECKING:
     from app.core.config import Settings
 
-classifier_LLM = ChatGroq(
+_RED = "\033[91m"
+_RESET = "\033[0m"
+
+grop_LLM = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0.2,
     api_key=settings.GROQ_API_KEY,
 )
-print("✅ classifier_LLM ready:", classifier_LLM.model_name)
-
+print("✅ grop_LLM ready:", grop_LLM.model_name)
 
 
 class ClassifierOutput(BaseModel):
@@ -40,7 +42,7 @@ class GraphState(TypedDict):
     is_valid: bool
 
 
-classifier_chain = CLASSIFIER_PROMPT | classifier_LLM.with_structured_output(ClassifierOutput)
+classifier_chain = CLASSIFIER_PROMPT | grop_LLM.with_structured_output(ClassifierOutput)
 
 
 def classifier_node(state: GraphState):
@@ -51,11 +53,13 @@ def classifier_node(state: GraphState):
 
 def general_search_node(state: GraphState):
     messages_for_llm = [GENERAL_SYSTEM_PROMPT] + state["messages"]
-    res = classifier_LLM.invoke(messages_for_llm)
+    res = grop_LLM.invoke(messages_for_llm)
     print("GENERAL SEARCH RESULT:", res)
     return {"messages": [res]}
 
+
 def domain_search_node(state: GraphState):
+    print(f"{_RED}[DEBUG]: domain_search_node{_RESET}")
     question = state["question"]
 
     prompt = f"""
@@ -65,13 +69,12 @@ def domain_search_node(state: GraphState):
     {question}
     """
 
-    response = classifier_LLM.invoke(prompt)
+    response = grop_LLM.invoke(prompt)
+    return {"messages": [response]}
 
-    return {
-        "messages": [response]
-    }
 
 def summarize_node(state: GraphState):
+    print(f"{_RED}[DEBUG]: summarize_node{_RESET}")
     question = state["question"]
 
     prompt = f"""
@@ -80,14 +83,13 @@ def summarize_node(state: GraphState):
     {question}
     """
 
-    response = classifier_LLM.invoke(prompt)
+    response = grop_LLM.invoke(prompt)
+    return {"messages": [response]}
 
-    return {
-        "messages": [response]
-    }
 
 def compare_node(state: GraphState):
     question = state["question"]
+    print(f"{_RED}[DEBUG]: compare_node{_RESET}")
 
     prompt = f"""
     Compara los siguientes conceptos jurídicos de manera estructurada:
@@ -100,48 +102,51 @@ def compare_node(state: GraphState):
     - Implicaciones legales
     """
 
-    response = classifier_LLM.invoke(prompt)
-
-    return {
-        "messages": [response]
-    }
+    response = grop_LLM.invoke(prompt)
+    print(response)
+    return {"messages": [response]}
 
 
 def rag_node(state: GraphState):
     # In a real RAG, you'd do retrieval here based on state["question"] and state["intent"]
     # For demonstration, we'll just have the LLM respond based on current messages.
     messages_for_llm = state["messages"]
-    res = classifier_LLM.invoke(messages_for_llm)
+    res = grop_LLM.invoke(messages_for_llm)
     print("RAG REQUEST RESULT:", state["question"], state["intent"])
     return {"messages": [res]}
 
+
 def validate_node(state: GraphState):
     answer = state["messages"][-1].content
-
+    print(f"{_RED}[DEBUG]: validate_node{_RESET}")
+    print(answer)
     # lógica básica (luego será con LLM)
     is_valid = "No sé" not in answer
 
-    return {
-        "is_valid": is_valid
-    }
+    return {"is_valid": is_valid}
+
 
 def validate_route(state: GraphState) -> Literal["rag_node", "integrate_node"]:
     if state["is_valid"]:
         return "integrate_node"
     return "rag_node"
 
+
 def integrate_node(state: GraphState):
     answer = state["messages"][-1].content
-
+    print(f"{_RED}[DEBUG]: integrate_node{_RESET}")
+    print(answer)
     return {
         "answer": answer,
         "question": state["question"],
         "intent": state["intent"],
-        "citations": []
+        "citations": [],
     }
 
 
-def classify_route(state: GraphState) -> Literal["domain_search_node", "summarize_node", "compare_node", "general_search_node"]:
+def classify_route(
+    state: GraphState,
+) -> Literal["domain_search_node", "summarize_node", "compare_node", "general_search_node"]:
     intent = state["intent"]
     if intent == "domainSearch":
         return "domain_search_node"
@@ -179,7 +184,6 @@ graph.add_conditional_edges("validate_node", validate_route)
 graph.add_edge("integrate_node", END)
 
 
-
 memory = InMemorySaver()
 chat = graph.compile(checkpointer=memory)
 """""
@@ -192,7 +196,6 @@ if __name__ == "__main__":
     print("\n====== MERMAID GRAPH ======\n")
     print(mermaid_code)
 """
-
 
 
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
