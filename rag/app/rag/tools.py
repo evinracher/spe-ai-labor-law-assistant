@@ -9,7 +9,7 @@ MAX_CITATIONS: int = 5
 # In a future milestone this will perform an actual vector-store similarity
 # search and return real document chunks.
 # ---------------------------------------------------------------------------
-
+# TODO: verify if we are going to use snippet
 _MOCK_CITATION_POOL: list[dict] = [
     {
         "source": "Código Sustantivo del Trabajo (CST)",

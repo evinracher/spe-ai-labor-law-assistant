@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { Box, Typography } from "@mui/material";
 import { COLORS } from "../../../styles/colors";
-import type { Message } from "../../types";
+import type { Message, Citation } from "../../types";
+
+const CITATIONS_PREVIEW = 3;
 
 // ─── FORMAT TIME ─────────────────────────────────────────────────────────────
 function formatTime(isoString: string): string {
@@ -29,6 +32,147 @@ function MessageText({ text }: { text: string }) {
         );
       })}
     </>
+  );
+}
+
+// ─── SINGLE CITATION CARD ────────────────────────────────────────────────────
+function CitationCard({ citation, index }: { citation: Citation; index: number }) {
+  const label = citation.page === null
+    ? citation.source
+    : `${citation.source} · p. ${citation.page}`;
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        gap: 1,
+        backgroundColor: "rgba(212,175,55,0.08)",
+        border: "1px solid rgba(212,175,55,0.25)",
+        borderRadius: "8px",
+        px: 1.25,
+        py: 0.85,
+      }}
+    >
+      {/* Index badge */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          width: 18,
+          height: 18,
+          borderRadius: "50%",
+          backgroundColor: COLORS.gold,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          mt: "1px",
+        }}
+      >
+        <Typography
+          sx={{ fontSize: "0.6rem", fontWeight: 700, color: COLORS.darkBg, lineHeight: 1 }}
+        >
+          {index + 1}
+        </Typography>
+      </Box>
+
+      <Box sx={{ minWidth: 0 }}>
+        {/* Source label */}
+        <Typography
+          sx={{
+            fontSize: "0.72rem",
+            fontWeight: 700,
+            color: COLORS.gold,
+            letterSpacing: "0.01em",
+            mb: 0.3,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </Typography>
+        {/* Snippet */}
+        <Typography
+          sx={{
+            fontSize: "0.78rem",
+            color: COLORS.textOnLightSecondary,
+            lineHeight: 1.5,
+            display: "-webkit-box",
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          "{citation.snippet}"
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+// ─── CITATION LIST ────────────────────────────────────────────────────────────
+function CitationList({ citations }: { citations: Citation[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (citations.length === 0) return null;
+
+  const shown = expanded ? citations : citations.slice(0, CITATIONS_PREVIEW);
+  const hasMore = citations.length > CITATIONS_PREVIEW;
+
+  return (
+    <Box
+      sx={{
+        borderTop: "1px solid rgba(212,175,55,0.2)",
+        mt: 1.5,
+        pt: 1.25,
+      }}
+    >
+      {/* Header */}
+      <Typography
+        sx={{
+          fontSize: "0.7rem",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: "0.07em",
+          color: COLORS.gold,
+          mb: 0.85,
+          opacity: 0.9,
+        }}
+      >
+        Fuentes consultadas ({citations.length})
+      </Typography>
+
+      {/* Cards */}
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+        {shown.map((c, i) => (
+          <CitationCard key={c.chunk_id ?? `${c.source}-${i}`} citation={c} index={i} />
+        ))}
+      </Box>
+
+      {/* Show more / less toggle */}
+      {hasMore && (
+        <Typography
+          component="button"
+          onClick={() => setExpanded((v) => !v)}
+          sx={{
+            mt: 0.85,
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            fontSize: "0.76rem",
+            fontWeight: 600,
+            color: COLORS.gold,
+            textDecoration: "underline",
+            textUnderlineOffset: "2px",
+            "&:hover": { color: COLORS.goldHover },
+          }}
+        >
+          {expanded
+            ? "Mostrar menos"
+            : `Mostrar ${citations.length - CITATIONS_PREVIEW} más…`}
+        </Typography>
+      )}
+    </Box>
   );
 }
 
@@ -62,6 +206,7 @@ export default function MessageBubble({ msg }: { msg: Message }) {
   const isUser = msg.role === "user";
   const isTyping = msg.role === "typing";
   const isError = msg.role === "error";
+  const hasCitations = !isUser && !isTyping && !isError && (msg.citations?.length ?? 0) > 0;
 
   return (
     <Box
@@ -109,7 +254,10 @@ export default function MessageBubble({ msg }: { msg: Message }) {
             <TypingDots />
           </Box>
         ) : (
-          <MessageText text={msg.text} />
+          <>
+            <MessageText text={msg.text} />
+            {hasCitations && <CitationList citations={msg.citations ?? []} />}
+          </>
         )}
       </Box>
 

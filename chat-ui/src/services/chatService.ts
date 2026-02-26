@@ -1,10 +1,5 @@
 import { mockResponse } from "../mocks/mockService";
-interface Citation {
-  source: string;
-  page: number | null;
-  chunk_id: string | null;
-  snippet: string;
-}
+import type { Citation } from "../app/types";
 
 interface Trace {
   intent: string | null;
@@ -27,13 +22,18 @@ interface ChatRequest {
   max_citations?: number;
 }
 
+export interface ChatResult {
+  answer: string;
+  citations: Citation[];
+}
+
 const API_URL = import.meta.env.VITE_API_URL as string;
 
 export async function sendMessageRequest(
   question: string,
   conversationId?: string,
   maxCitations?: number
-): Promise<string> {
+): Promise<ChatResult> {
   if (API_URL) {
     const body: ChatRequest = { question };
     if (conversationId) body.conversation_id = conversationId;
@@ -50,10 +50,11 @@ export async function sendMessageRequest(
     }
 
     const data: ChatResponse = await response.json();
-    return data.answer;
+    return { answer: data.answer, citations: data.citations ?? [] };
   }
-  
-  return await mockResponse();
+
+  const answer = await mockResponse();
+  return { answer, citations: [] };
 }
 
 function generateUUID(): string {
