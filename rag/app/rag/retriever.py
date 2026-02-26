@@ -2,13 +2,15 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
+
 # 1. Definimos la estructura exacta que queremos que devuelva Groq (solo un número)
 class KSelector(BaseModel):
     k_value: int = Field(description="Number of fragments to retrieve, between 1 and 10")
 
 def recuperar_contexto_dinamico(pregunta: str, vectorstore):
     # 2. Instanciamos Groq (requiere GROQ_API_KEY en tu .env)
-    llm_groq = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+    llm_groq = ChatGroq(model="llama-3.1-8b-instant", temperature=0, api_key=settings.GROQ_API_KEY)
     
     # Forzamos a que la salida sea un objeto estructurado (JSON con la llave 'k')
     llm_estructurado = llm_groq.with_structured_output(KSelector)
@@ -43,8 +45,7 @@ def formatear_documentos_para_gemini(documentos_recuperados) -> str:
         doc_id = doc.metadata.get('doc_id', 'Documento Desconocido')
         pagina = doc.metadata.get('page', 'Sin página')
         chunk_id = doc.metadata.get('chunk_id', 'Sin ID')
-        
-        # --- TU RETO ESTÁ AQUÍ ---
+    
         # Usa estas 4 variables (contenido, doc_id, pagina, chunk_id) para armar
         # un bloque de texto ordenado y súmalo a 'texto_final'.
         
