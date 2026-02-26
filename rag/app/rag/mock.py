@@ -52,7 +52,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING
 
-from app.api.schemas import Citation, ChatResponse, Trace
+from app.api.schemas import ChatResponse, Citation, Trace
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -64,20 +64,56 @@ if TYPE_CHECKING:
 _OUT_OF_CONTEXT_KEYWORDS: frozenset[str] = frozenset(
     {
         # astronomy / science
-        "astronomía", "astronomia", "planeta", "galaxia", "nebulosa", "cometa",
-        "telescopio", "universo", "agujero negro",
+        "astronomía",
+        "astronomia",
+        "planeta",
+        "galaxia",
+        "nebulosa",
+        "cometa",
+        "telescopio",
+        "universo",
+        "agujero negro",
         # cooking
-        "receta", "cocina", "ingrediente", "hornear", "freír", "freir",
-        "postre", "sopa", "ensalada", "gastronomía", "gastronomia",
+        "receta",
+        "cocina",
+        "ingrediente",
+        "hornear",
+        "freír",
+        "freir",
+        "postre",
+        "sopa",
+        "ensalada",
+        "gastronomía",
+        "gastronomia",
         # sports / entertainment
-        "fútbol", "futbol", "béisbol", "beisbol", "baloncesto", "tenis",
-        "mundial", "gol", "estadio", "jugador de fútbol",
+        "fútbol",
+        "futbol",
+        "béisbol",
+        "beisbol",
+        "baloncesto",
+        "tenis",
+        "mundial",
+        "gol",
+        "estadio",
+        "jugador de fútbol",
         # geography / travel (unrelated)
-        "turismo", "montañismo", "senderismo", "buceo",
+        "turismo",
+        "montañismo",
+        "senderismo",
+        "buceo",
         # pop culture
-        "película", "pelicula", "serie", "videojuego", "anime", "manga",
+        "película",
+        "pelicula",
+        "serie",
+        "videojuego",
+        "anime",
+        "manga",
         # medicine (outside occupational accidents scope)
-        "cirugía", "cirugia", "oncología", "oncologia", "cardiología",
+        "cirugía",
+        "cirugia",
+        "oncología",
+        "oncologia",
+        "cardiología",
     }
 )
 
@@ -243,7 +279,7 @@ _ANSWER_TEMPLATES: list[str] = [
 # ---------------------------------------------------------------------------
 
 
-def mock_rag_answer(question: str, settings: "Settings") -> ChatResponse:
+def mock_rag_answer(question: str, settings: Settings) -> ChatResponse:
     """
     Generate a deterministic mock ChatResponse for development and demo purposes.
 
@@ -278,7 +314,6 @@ def mock_rag_answer(question: str, settings: "Settings") -> ChatResponse:
                 intent=None,
                 top_k=0,
                 vector_db=settings.VECTOR_DB,
-                llm_provider=settings.LLM_PROVIDER,
             ),
         )
 
@@ -290,7 +325,7 @@ def mock_rag_answer(question: str, settings: "Settings") -> ChatResponse:
     # Pick answer template
     answer_text = _ANSWER_TEMPLATES[digest % len(_ANSWER_TEMPLATES)]
 
-    # Pick 2–4 citations (distinct, order shuffled deterministically)
+    # Pick 2-4 citations (distinct, order shuffled deterministically)
     num_citations = 2 + (digest % 3)  # 2, 3, or 4
     # Use different bit slices of the hash to pick source indices
     indices: list[int] = []
@@ -326,7 +361,6 @@ def mock_rag_answer(question: str, settings: "Settings") -> ChatResponse:
             intent=intent,
             top_k=top_k,
             vector_db=settings.VECTOR_DB,
-            llm_provider=settings.LLM_PROVIDER,
         ),
     )
 

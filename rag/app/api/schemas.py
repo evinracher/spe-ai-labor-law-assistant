@@ -92,10 +92,6 @@ class Trace(BaseModel):
         ...,
         description="Vector database backend used for retrieval.",
     )
-    llm_provider: str = Field(
-        ...,
-        description="LLM provider used for answer generation.",
-    )
 
 
 class ChatResponse(BaseModel):

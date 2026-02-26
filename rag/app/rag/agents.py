@@ -10,15 +10,17 @@ from langgraph.graph import END, START, StateGraph, add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-from app.api.schemas import ChatResponse, Trace
+from app.api.schemas import ChatResponse, Citation, Trace
 from app.core.config import settings
 from app.rag.prompts import CLASSIFIER_PROMPT, GENERAL_SYSTEM_PROMPT
+from app.rag.tools import MAX_CITATIONS, generate_mock_citations
 
 if TYPE_CHECKING:
     from app.core.config import Settings
 
 _RED = "\033[91m"
 _RESET = "\033[0m"
+
 
 grop_LLM = ChatGroq(
     model="llama-3.1-8b-instant",
@@ -40,6 +42,7 @@ class GraphState(TypedDict):
     question: str
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch"]
     rag_prompt: str  # TODO: investigate a better way to connect the nodes, maybe RAG should be a tool that searches the corpus and returns the relevant information to the intent nodes, instead of passing the prompt through the state
+    citations: list[Citation]
     is_valid: bool
 
 
@@ -107,6 +110,14 @@ def compare_node(state: GraphState):
 def rag_node(state: GraphState):
     print(f"{_RED}[DEBUG]: rag_node — intent={state['intent']}{_RESET}")
     rag_prompt = state.get("rag_prompt", "")
+    question = state["question"]
+
+    # Generate mock citations via the tool
+    raw_citations: list[dict] = generate_mock_citations.invoke(
+        {"question": question, "max_citations": MAX_CITATIONS}
+    )
+    citations = [Citation(**c) for c in raw_citations]
+    print(f"{_RED}[DEBUG]: rag_node — generated {len(citations)} citations{_RESET}")
 
     if rag_prompt:
         # Use the prompt built by the upstream intent node (domain/summarize/compare)
@@ -119,7 +130,7 @@ def rag_node(state: GraphState):
         # Fallback: use raw conversation messages (e.g. when coming from validate_route retry)
         res = grop_LLM.invoke(state["messages"])
 
-    return {"messages": [res]}
+    return {"messages": [res], "citations": citations}
 
 
 def validate_node(state: GraphState):
@@ -147,7 +158,7 @@ def integrate_node(state: GraphState):
         "answer": answer,
         "question": state["question"],
         "intent": state["intent"],
-        "citations": [],
+        "citations": state.get("citations", []),
     }
 
 
@@ -208,12 +219,11 @@ if __name__ == "__main__":
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
     config = {"configurable": {"thread_id": conversation_id}}
     initial_messages = {"messages": [HumanMessage(content=question)]}
-    messages = chat.invoke(initial_messages, config=config)["messages"]
-    response = messages[-1].content
-    answer_text = response
-    citations = []
-    intent = ""
-    top_k = 4
+    result = chat.invoke(initial_messages, config=config)
+    answer_text = result["messages"][-1].content
+    citations: list[Citation] = result.get("citations", [])
+    intent = result.get("intent", "")
+    top_k = MAX_CITATIONS
     request_id = "test"
 
     return ChatResponse(
@@ -225,6 +235,5 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
             intent=intent,
             top_k=top_k,
             vector_db=settings.VECTOR_DB,
-            llm_provider=settings.LLM_PROVIDER,
         ),
     )

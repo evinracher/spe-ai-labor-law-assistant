@@ -9,7 +9,6 @@ Run with:
 
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -38,7 +37,6 @@ def test_chat_in_context_returns_citations() -> None:
     assert len(data["answer"]) > 10
     assert len(data["citations"]) >= 2
     assert data["trace"]["vector_db"] is not None
-    assert data["trace"]["llm_provider"] is not None
 
 
 def test_chat_out_of_context_returns_empty_citations() -> None:

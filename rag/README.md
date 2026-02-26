@@ -177,8 +177,7 @@ Ask the Colombian labor law assistant.
   "trace": {
     "intent": "string | null",
     "top_k": "integer | null",
-    "vector_db": "string",
-    "llm_provider": "string"
+    "vector_db": "string"
   }
 }
 ```
@@ -223,7 +222,7 @@ curl -s -X POST http://localhost:8000/chat \
   "request_id": "...",
   "answer": "No aparece en el contexto.",
   "citations": [],
-  "trace": { "intent": null, "top_k": 0, "vector_db": "chroma", "llm_provider": "mock" }
+  "trace": { "intent": null, "top_k": 0, "vector_db": "chroma" }
 }
 ```
 
