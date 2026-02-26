@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -223,8 +224,8 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
     answer_text = result["messages"][-1].content
     citations: list[Citation] = result.get("citations", [])
     intent = result.get("intent", "")
-    top_k = MAX_CITATIONS
-    request_id = "test"
+    top_k = len(citations)
+    request_id = str(uuid.uuid4())
 
     return ChatResponse(
         ok=True,
