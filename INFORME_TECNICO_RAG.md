@@ -44,6 +44,10 @@ El sistema clasifica automáticamente la intención del usuario y enruta la cons
 
 ## 2. Arquitectura del sistema
 
+### Diseño inicial del sistema
+
+![Diseño inicial del sistema RAG](examples/initial-design.png)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        React Frontend                        │
