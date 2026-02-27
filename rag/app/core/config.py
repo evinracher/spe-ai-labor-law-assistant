@@ -60,7 +60,7 @@ class Settings(BaseSettings):
             "Use 'mock' for development without API keys."
         ),
     )
-    GEMINI_API_KEY: str | None = Field(
+    GOOGLE_API_KEY: str | None = Field(
         default=None,
         description="Google Gemini API key. Required when LLM_PROVIDER='gemini'.",
     )
@@ -86,9 +86,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _warn_missing_keys(self) -> "Settings":
         """Emit a warning (not raise) if LLM_PROVIDER requires a key that is absent."""
-        if self.LLM_PROVIDER == "gemini" and not self.GEMINI_API_KEY:
+        if self.LLM_PROVIDER == "gemini" and not self.GOOGLE_API_KEY:
             print(
-                "[WARNING] LLM_PROVIDER=gemini but GEMINI_API_KEY is not set. "
+                "[WARNING] LLM_PROVIDER=gemini but GOOGLE_API_KEY is not set. "
                 "The LLM step will fail at runtime."
             )
         if self.LLM_PROVIDER == "groq" and not self.GROQ_API_KEY:

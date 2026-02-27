@@ -250,7 +250,7 @@ curl -s -X POST http://localhost:8000/chat \
 | `VECTOR_DB` | `chroma` | Vector database backend |
 | `CHROMA_DIR` | `./storage/chroma` | ChromaDB persistent directory |
 | `LLM_PROVIDER` | `groq` | `groq` (default) / `gemini` / `local` / `mock` |
-| `GEMINI_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=gemini` |
+| `GOOGLE_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=gemini` |
 | `GROQ_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=groq` (**required for default setup**) |
 | `EMBEDDINGS_PROVIDER` | `local` | Embeddings backend |
 | `EMBEDDINGS_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Multilingual model |
