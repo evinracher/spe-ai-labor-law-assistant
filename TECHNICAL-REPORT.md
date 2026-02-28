@@ -295,7 +295,7 @@ La siguiente imagen muestra el diseño inicial (versión 2) del grafo LangGraph,
 ### 5.2 Flujo de ejecución
 
 ![Flujo de ejecución del sistema](examples/flujo_ejecucion.png)
-*Figura 3. Flujo de ejecución del sistema.*
+*Figura 4. Flujo de ejecución del sistema.*
 
 ### 5.3 Estado del grafo (`GraphState`)
 
