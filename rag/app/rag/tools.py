@@ -34,6 +34,18 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.rag.retriever import recuperar_contexto_dinamico, formatear_documentos_para_gemini
 from app.api.schemas import Citation
+from app.rag.citation_formatter import format_citations_in_text  # re-exported for use by other modules
+
+__all__ = [
+    "classify_intent",
+    "semantic_search",
+    "read_document",
+    "generate_grounded_answer",
+    "validate_answer",
+    "format_citations_in_text",
+    "gemini_LLM",
+    "groq_LLM",
+]
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -414,27 +426,39 @@ def generate_grounded_answer(
     
     try:
         # Build context-aware instruction based on intent
+        # These instructions are merged from the domain/summarize/compare nodes
+        # to ensure they are actually enforced in the prompt.
         intent_instructions = {
             "domainSearch": (
-                "Act as an expert in Colombian labor law. Answer the user's "
-                "question directly, precisely, and grounded strictly in the provided law. "
-                "Make sure to cite relevant articles, laws, or decrees using metadata."
+                "Act as an expert in Colombian labor law. Read the retrieved legal context, "
+                "and answer the user's question directly, precisely, and grounded strictly in the provided law.\n\n"
+                f"The user's question is: '{question}'.\n\n"
+                "Make sure to cite the relevant articles, laws, or decrees using the provided metadata.\n\n"
+                "IMPORTANT: Your final response MUST be written entirely in Spanish."
             ),
             "summarize": (
-                "Act as a legal analyst. Generate a clear, structured, and easy-to-understand "
-                "summary of the consulted topic. Use bullet points if necessary for readability."
+                "Act as a legal analyst. Using the retrieved legal context, generate a clear, "
+                "structured, and easy-to-understand summary of the consulted topic. "
+                "Use bullet points if necessary for better readability.\n\n"
+                f"The user's consulted topic is: '{question}'.\n\n"
+                "IMPORTANT: Your final response MUST be written entirely in Spanish."
             ),
             "compare": (
-                "Act as an expert in Colombian labor law. Compare the legal concepts requested "
-                "by the user in a structured way. Organize response into: "
-                "1. Definición de los conceptos, 2. Diferencias clave, 3. Implicaciones legales."
+                "Act as an expert in Colombian labor law. Based on the retrieved context, "
+                "compare the legal concepts requested by the user in a structured way. "
+                "Organize your response strictly into these three sections:\n"
+                "1. Definición de los conceptos (Definition of the concepts)\n"
+                "2. Diferencias clave (Key differences)\n"
+                "3. Implicaciones legales (Legal implications for the employee/employer)\n\n"
+                f"The information to compare is: '{question}'.\n\n"
+                "IMPORTANT: Your final response MUST be written entirely in Spanish."
             ),
             "generalSearch": (
                 "Act as a helpful legal assistant. Provide a general response based on "
                 "the provided context if available."
-            )
+            ),
         }
-        
+
         specific_instruction = intent_instructions.get(
             intent,
             intent_instructions["domainSearch"]
