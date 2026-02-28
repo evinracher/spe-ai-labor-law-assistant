@@ -40,3 +40,4 @@ Thumbs.db
 #data/
 #BD data/
 db_chroma/
+*.sqlite3
