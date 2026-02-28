@@ -101,7 +101,15 @@ cp .env.example .env
 # The defaults work out-of-the-box with LLM_PROVIDER=mock.
 ```
 
-### 5 — Run the server
+### 5 - Run Ingestion Pipeline
+```bash
+#First you must add your google api key into .env file
+python -m app.rag.pipelines.run_ingestion
+#or
+python app/rag/pipelines/run_ingestion.py
+```
+
+### 6 — Run the server
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
