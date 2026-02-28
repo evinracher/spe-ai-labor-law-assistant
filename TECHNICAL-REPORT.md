@@ -110,6 +110,10 @@ El **Asistente de Derecho Laboral Colombiano** es un chatbot conversacional basa
 └─────────────────────────────────┘
 ```
 
+![Arquitectura del sistema](examples/arquitectura.png)
+
+*Figura 1: Diagrama de arquitectura del sistema mostrando la integración entre el frontend React, la API FastAPI, el grafo LangGraph, las 7 herramientas y la base vectorial ChromaDB.*
+
 ### 2.2 Pila tecnológica
 
 | Capa | Tecnología | Versión |
@@ -446,6 +450,10 @@ START
                    END               volver a expert_node
 ```
 
+![Flujo de ejecución](examples/flujo_ejecucion.png)
+
+*Figura 2: Diagrama del flujo de ejecución completo mostrando el enrutamiento condicional desde el clasificador de intención hacia los nodos RAG expertos, el nodo general y el nodo de validación.*
+
 ### 5.4 Estado del grafo (`GraphState`)
 
 ```python
@@ -588,13 +596,21 @@ El modelo `gemini-embedding-001` de Google fue seleccionado porque:
 
 La interfaz de usuario es una aplicación React con TypeScript construida con Vite. Provee un chat conversacional con soporte para visualización de citas y panel de rastreo de herramientas.
 
+### 8.0 Diseño inicial
+
+El diseño visual de la interfaz fue prototipado en Figma antes de la implementación. La siguiente imagen muestra el diseño inicial de referencia:
+
+![Diseño inicial de la interfaz](examples/initial-design-v2.png)
+
+*Figura 3: Diseño inicial (v2) de la interfaz de chat elaborado en Figma, que sirvió como referencia para la implementación de componentes en React.*
+
 ### 8.1 Pantalla principal del chat
 
 La siguiente imagen muestra la interfaz principal del asistente con una conversación activa:
 
 ![Chat UI — Pantalla principal](examples/chat-ui-1.png)
 
-*Figura 1: Interfaz principal del asistente de derecho laboral colombiano con respuesta generada por el sistema RAG. Se observa la burbuja de respuesta con texto en español fundamentado en el corpus legal.*
+*Figura 4: Interfaz principal del asistente de derecho laboral colombiano con respuesta generada por el sistema RAG. Se observa la burbuja de respuesta con texto en español fundamentado en el corpus legal.*
 
 ### 8.2 Panel de citas y trazabilidad
 
@@ -602,7 +618,7 @@ El sistema expone las citas de las fuentes recuperadas directamente en la interf
 
 ![Chat UI — Panel de citas y fuentes](examples/chat-ui-2-citations.png)
 
-*Figura 2: Panel lateral de citas mostrando los fragmentos del Código Sustantivo del Trabajo recuperados por el nodo `rag_node`. Cada cita incluye el documento fuente, el número de página y el fragmento textual relevante.*
+*Figura 5: Panel lateral de citas mostrando los fragmentos del Código Sustantivo del Trabajo recuperados por el nodo `rag_node`. Cada cita incluye el documento fuente, el número de página y el fragmento textual relevante.*
 
 ### 8.3 Características de la UI
 
