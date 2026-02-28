@@ -3,6 +3,7 @@ import { Box, Typography, Collapse, Paper, Chip } from '@mui/material';
 import { ExpandMore, ExpandLess, AutoStories } from '@mui/icons-material';
 import type { Citation } from '../../types';
 import { COLORS } from '../../../styles/colors';
+import { sourceToGithubUrl, sourceToDisplayName } from '../../utils/sourceLinks';
 
 interface CitationsPanelProps {
   citations: Citation[];
@@ -75,7 +76,20 @@ export default function CitationsPanel({ citations, defaultExpanded = true }: Ci
               }}
             >
               <Typography sx={{ fontWeight: 700, color: '#6450c8', fontSize: '0.95rem', mb: 0.75 }}>
-                📋 {citation.source}
+                📋{' '}
+                <a
+                  href={sourceToGithubUrl(citation.source)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: '#6450c8',
+                    textDecoration: 'underline',
+                    textUnderlineOffset: '3px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {sourceToDisplayName(citation.source)}
+                </a>
               </Typography>
               {citation.page && (
                 <Chip label={`Pág. ${citation.page}`} size="small" sx={{ mb: 1, backgroundColor: 'rgba(100, 80, 200, 0.1)', color: '#6450c8' }} />
