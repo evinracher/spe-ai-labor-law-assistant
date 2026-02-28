@@ -80,13 +80,11 @@ class Trace(BaseModel):
 
     intent: str | None = Field(
         default=None,
-        description="Classified intent of the question (e.g. 'vacaciones', 'salario').",
-        # TODO (milestone 2): populate via LangGraph intent-classification node.
+        description="Classified intent of the question (e.g. 'domainSearch', 'summarize', 'compare').",
     )
     top_k: int | None = Field(
         default=None,
         description="Number of chunks retrieved from the vector store.",
-        # TODO (milestone 2): populate from retrieval step.
     )
     vector_db: str = Field(
         ...,
@@ -95,6 +93,68 @@ class Trace(BaseModel):
     llm_provider: str = Field(
         ...,
         description="LLM provider used for answer generation.",
+    )
+
+
+class ToolTraceStep(BaseModel):
+    """Execution trace for a single Tool invocation."""
+    
+    tool_name: str = Field(
+        ...,
+        description="Name of the Tool executed (e.g., 'classify_intent', 'semantic_search')."
+    )
+    status: str = Field(
+        default="success",
+        description="Execution status: 'success', 'failure', 'skipped'."
+    )
+    input: dict | None = Field(
+        default=None,
+        description="Input parameters passed to the Tool."
+    )
+    output: dict | None = Field(
+        default=None,
+        description="Output returned by the Tool."
+    )
+    error: str | None = Field(
+        default=None,
+        description="Error message if Tool execution failed."
+    )
+    timestamp: str | None = Field(
+        default=None,
+        description="ISO timestamp of Tool execution."
+    )
+
+
+class WorkflowTrace(BaseModel):
+    """Complete workflow execution trace with all Tool steps."""
+    
+    conversation_id: str = Field(
+        ...,
+        description="Conversation ID for session tracking."
+    )
+    total_steps: int = Field(
+        default=0,
+        description="Total number of nodes/tools executed."
+    )
+    tools_used: list[str] = Field(
+        default_factory=list,
+        description="List of Tools called during workflow."
+    )
+    tool_traces: list[ToolTraceStep] = Field(
+        default_factory=list,
+        description="Detailed trace for each Tool invocation."
+    )
+    validation_passed: bool = Field(
+        default=True,
+        description="Whether final answer passed validation."
+    )
+    validation_details: dict | None = Field(
+        default=None,
+        description="Detailed validation scores and reasons."
+    )
+    execution_time_ms: float | None = Field(
+        default=None,
+        description="Total workflow execution time in milliseconds."
     )
 
 
@@ -123,4 +183,12 @@ class ChatResponse(BaseModel):
     trace: Trace = Field(
         ...,
         description="Execution trace for debugging.",
+    )
+    workflow_trace: WorkflowTrace | None = Field(
+        default=None,
+        description="Complete workflow trace with all Tool steps and validation details."
+    )
+    metadata: dict | None = Field(
+        default=None,
+        description="Additional metadata including tool traces and validation scores.",
     )
