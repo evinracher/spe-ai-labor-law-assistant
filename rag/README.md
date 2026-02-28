@@ -2,7 +2,12 @@
 
 Intelligent chatbot with Retrieval-Augmented Generation (RAG) for **Colombian labor law** (*derecho laboral colombiano*) and general question answering capabilities.
 
-The backend implements a LangGraph-based agent workflow with 5 formal tools that orchestrate intent classification, semantic search over 50+ legal documents, grounded answer generation, and answer validation.
+> **Current Milestone — Intent Classification & General Q&A**  
+> The server implements LangGraph-based intent classification to route questions between:
+> - **Labor law queries**: RAG-based retrieval from Colombian labor law corpus (in development)
+> - **General questions**: Direct LLM-based question answering (fully functional)
+> 
+> Vector retrieval and full RAG pipeline are **partially implemented** (see [Current Status](#current-status) and [Next Steps](#next-steps) below).
 
 ---
 
@@ -17,7 +22,7 @@ The backend implements a LangGraph-based agent workflow with 5 formal tools that
 | General Q&A | Direct answers for non-labor-law questions |
 | Embeddings | Local sentence-transformers (no paid API required) |
 | Vector DB | ChromaDB (persistent local directory) |
-| LLM providers | Groq (llama-3.1-8b-instant), Gemini, or mock |
+| LLM providers | Groq (default), Gemini, local (Ollama), or mock |
 | Workflow Engine | LangGraph for agent orchestration |
 | Frontend | React app calling `POST /chat` — no auth required |
 
@@ -34,21 +39,14 @@ rag/
 │   │   └── schemas.py     # Pydantic v2 request/response models
 │   ├── core/
 │   │   └── config.py      # Pydantic Settings (env vars / .env)
-│   ├── data/              # Colombian labor law PDF corpus (50+ documents)
 │   └── rag/
 │       ├── agents.py      # LangGraph workflow with intent classification
-│       ├── tools.py       # 5 formal LangChain Tools
-│       ├── retriever.py   # Dynamic-k similarity search
-│       ├── ingestion.py   # PDF ingestion & text splitting
 │       ├── llm.py         # LLM provider implementations
 │       ├── prompts.py     # System prompts for classification and Q&A
-│       ├── mock.py        # Deterministic mock responder (fallback)
-│       └── pipelines/
-│           └── run_ingestion.py  # CLI entry point for corpus ingestion
-├── db_chroma/         # ChromaDB persistent directory
+│       └── mock.py        # Deterministic mock RAG responder (fallback)
+├── storage/               # ChromaDB persistent directory (created at runtime)
 ├── tests/
-│   ├── test_api.py        # API smoke tests (FastAPI TestClient)
-│   └── test_rag.py        # RAG pipeline tests
+│   └── test_api.py        # Smoke tests with FastAPI TestClient
 ├── .env.example
 ├── .gitignore
 ├── Makefile               # Development commands
@@ -103,7 +101,15 @@ cp .env.example .env
 # The defaults work out-of-the-box with LLM_PROVIDER=mock.
 ```
 
-### 5 — Run the server
+### 5 - Run Ingestion Pipeline
+```bash
+#First you must add your google api key into .env file
+python -m app.rag.pipelines.run_ingestion
+#or
+python app/rag/pipelines/run_ingestion.py
+```
+
+### 6 — Run the server
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -248,9 +254,9 @@ curl -s -X POST http://localhost:8000/chat \
 | `HOST` | `0.0.0.0` | Bind host |
 | `PORT` | `8000` | Bind port |
 | `ENV` | `dev` | Runtime environment (`dev` or `prod`) |
-| `DATA_DIR` | `./app/data` | Corpus source files directory |
+| `DATA_DIR` | `./data` | Corpus source files directory |
 | `VECTOR_DB` | `chroma` | Vector database backend |
-| `CHROMA_DIR` | `./db_chroma` | ChromaDB persistent directory |
+| `CHROMA_DIR` | `./storage/chroma` | ChromaDB persistent directory |
 | `LLM_PROVIDER` | `groq` | `groq` (default) / `gemini` / `local` / `mock` |
 | `GOOGLE_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=gemini` |
 | `GROQ_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=groq` (**required for default setup**) |
@@ -261,43 +267,79 @@ curl -s -X POST http://localhost:8000/chat \
 
 ---
 
-## Implemented Features
+## Current Status
+
+### ✅ Implemented Features
 
 1. **LangGraph Agent Workflow** (`app/rag/agents.py`)
-   - Intent classification node using Tool 1 (`classify_intent` via Gemini)
-   - RAG node for labor law queries: semantic search → grounded generation → answer validation
-   - General search node for non-labor-law questions with direct LLM responses
-   - In-memory conversation history (`InMemorySaver`) with persistent conversation IDs
+   - Intent classification node: Determines if a question is about labor law or general knowledge
+   - RAG node: Handles labor law queries (currently uses mock data, will integrate with vector DB)
+   - General search node: Handles general questions with direct LLM responses
+   - In-memory conversation history with persistent conversation IDs
    - Conditional routing based on intent classification
 
-2. **5 Formal LangChain Tools** (`app/rag/tools.py`)
-   - `classify_intent` — Classifies user intent using Gemini (`domainSearch` / `summarize` / `compare` / `generalSearch`)
-   - `semantic_search` — Dynamic-k similarity search over ChromaDB; uses Groq to determine retrieval depth (1–10 fragments)
-   - `read_document` — Full document access by source metadata for citation verification
-   - `generate_grounded_answer` — Grounded answer generation with citations using Gemini
-   - `validate_answer` — Quality assessment and hallucination detection
+2. **LLM Integration** (`app/rag/llm.py`)
+   - Groq client (llama-3.1-8b-instant) — fully functional
+   - Gemini client — fully functional
+   - Configurable via `LLM_PROVIDER` environment variable
 
-3. **LLM Integration** (`app/rag/llm.py`)
-   - Groq client (llama-3.1-8b-instant) — used for dynamic-k retrieval decisions
-   - Gemini client — used for intent classification and grounded answer generation
+3. **Intent Classification**
+   - Automatically routes questions to appropriate handler:
+     - `domainSearch`: Labor law specific questions → RAG pipeline
+     - `summarize`: Summarization requests → RAG pipeline
+     - `compare`: Comparison questions → RAG pipeline
+     - `generalSearch`: General knowledge questions → Direct LLM
 
-4. **Corpus Ingestion Pipeline** (`app/rag/ingestion.py`, `app/rag/pipelines/run_ingestion.py`)
-   - Loads 50+ PDF documents from `app/data/`
-   - Cleans and normalizes extracted text (removes noise, normalizes whitespace)
-   - Splits documents into overlapping chunks (1000 tokens, 150 overlap) with legal-aware separators (`ARTÍCULO`, `PARÁGRAFO`, `CAPÍTULO`, etc.)
-   - Embeds chunks with `paraphrase-multilingual-MiniLM-L12-v2` and persists to ChromaDB
-
-5. **RAG Retriever** (`app/rag/retriever.py`)
-   - Dynamic-k retrieval: Groq determines how many fragments to retrieve per query (1–10)
-   - Formats retrieved documents with source, page, and snippet for citation
-
-6. **API Endpoints**
+4. **API Endpoints**
    - `GET /health`: Health check
-   - `POST /chat`: Chat endpoint with intent-aware routing, citations, and execution trace
+   - `POST /chat`: Chat endpoint with intent-aware routing
    - Full request/response validation with Pydantic v2
 
-7. **Conversation Management**
-   - Persistent conversation threads using LangGraph `InMemorySaver`
+5. **Conversation Management**
+   - Persistent conversation threads using LangGraph checkpointer
    - Conversation ID-based message history
-   - Automatic context retention across multiple questions in a session
+   - Automatic context retention across multiple questions
+
+### 🚧 In Progress / TODO
+
+---
+
+## Next Steps
+
+The following features are planned for upcoming milestones:
+
+1. **Corpus ingestion pipeline** (`app/rag/ingest.py`)  
+   Load PDF (pypdf), HTML (BeautifulSoup), and TXT files from `DATA_DIR`; normalize text; split into overlapping chunks (≈ 512 tokens, 64-token overlap); embed with sentence-transformers; persist to ChromaDB at `CHROMA_DIR`.
+
+2. **ChromaDB client initialization** (`app/core/vector_store.py`)  
+   Wrap `chromadb.PersistentClient`; create/load the `labor_law` collection; expose `similarity_search(query, top_k)` returning `List[Citation]`.
+
+3. **Local embeddings service** (`app/rag/embeddings.py`)  
+   Load `settings.EMBEDDINGS_MODEL` once at startup (cache in module); expose `embed(text) -> List[float]`. Use sentence-transformers multilingual model.
+
+4. **`POST /ingest` endpoint** (optional)  
+   Trigger the ingestion pipeline on demand, or add a CLI script `python -m app.ingest` to populate the vector database.
+
+5. **Full RAG retrieval in `rag_node`** (`app/rag/agents.py`)  
+   Replace mock responses with actual vector similarity search. Query ChromaDB, retrieve top-k relevant chunks, format as context for the LLM prompt.
+
+6. **Enhanced strict prompt template** (`app/rag/prompts.py`)  
+   Strengthen system prompt: *"Responde ÚNICAMENTE basándote en los fragmentos proporcionados. Si la información no está en los fragmentos, responde exactamente: 'No aparece en el contexto.' sin agregar nada más."*  
+   Ensure the RAG node never hallucinates beyond retrieved context.
+
+7. **Citation extraction and formatting**  
+   Parse LLM responses to extract source references, page numbers, and snippets. Return properly formatted `Citation` objects in the API response with actual document sources.
+
+8. **Local LLM support** (Ollama integration)  
+   Implement `LocalClient` for `LLM_PROVIDER=local` to support offline/local models.
+
+9. **Integration tests for full RAG pipeline** (`tests/test_pipeline.py`)  
+   - Test that a labor law question gets citations from the corpus
+   - Test that an out-of-domain question triggers general search
+   - Test that unavailable information returns `"No aparece en el contexto."`
+   - Test conversation history retention
+
+10. **Performance optimization**  
+    - Cache embeddings for common queries
+    - Implement async vector search
     - Add request rate limiting and response caching

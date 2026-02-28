@@ -38,3 +38,7 @@ Thumbs.db
 
 # Data folder (corpus PDFs etc.) — add your files locally, do not commit
 #data/
+#BD data/
+db_chroma/
+db_chroma_backup/
+*.sqlite3

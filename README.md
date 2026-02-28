@@ -4,44 +4,42 @@ An intelligent chatbot powered by Retrieval-Augmented Generation (RAG) that prov
 
 ## 📋 Overview
 
-This project implements a conversational AI assistant specialized in Colombian labor legislation. Using RAG technology and a LangGraph-based agent workflow with 5 formal tools, the chatbot can:
-- **Answer labor law questions**: Retrieves relevant legal information from a curated knowledge base (50+ PDFs) and generates accurate, contextual responses about labor rights, employment regulations, and legal procedures in Colombia.
+This project implements a conversational AI assistant specialized in Colombian labor legislation. Using RAG technology and intelligent intent classification, the chatbot can:
+- **Answer labor law questions**: Retrieves relevant legal information from a curated knowledge base and generates accurate, contextual responses about labor rights, employment regulations, and legal procedures in Colombia.
 - **Answer general questions**: Handles general queries outside the labor law domain using a general-purpose language model.
-- **Provide full traceability**: Shows which legal fragments were retrieved and how the answer was constructed.
 
 ## ✨ Features
 
 - 💬 Interactive chat interface for labor law queries and general questions
-- 🧠 Intelligent intent classification (labor law vs. general questions) via LangGraph
-- 🔍 RAG-based retrieval of relevant legal documents from 50+ Colombian legislation PDFs
-- 🌐 General question answering using Groq and Gemini LLM providers
-- 📚 Knowledge base covering the Código Sustantivo del Trabajo, Decreto 1072, Ley 100, and more
-- 🎯 Contextual responses with legal citations panel and source snippets
-- 🔎 Workflow trace panel showing retrieval steps and tool execution
+- 🧠 Intelligent intent classification (labor law vs. general questions)
+- 🔍 RAG-based retrieval of relevant legal documents and articles for labor law queries
+- 🌐 General question answering capabilities using state-of-the-art language models
+- 📚 Knowledge base of Colombian labor legislation
+- 🎯 Contextual responses with legal references and citations
 - 💾 Conversation history management across sessions
+- 🔄 Real-time chat interface with modern UI components
 
 ## 🏗️ Architecture
 
 The system consists of:
-- **LangGraph Agent Workflow**: Orchestrates 5 formal tools — intent classification, semantic search, document reading, grounded answer generation, and answer validation.
-- **RAG Pipeline**: For labor law queries, retrieves relevant context from ChromaDB before generating responses with citations.
-- **General Q&A**: Handles general questions using a direct LLM call.
-- **Vector Database**: ChromaDB with HuggingFace sentence-transformer embeddings of 50+ legal documents.
-- **LLM Integration**: Groq (llama-3.1-8b-instant) for retrieval tasks; Google Gemini for answer generation.
-- **Chat Interface**: Modern React-based UI with citations panel and workflow trace panel.
-- **Conversation Memory**: In-memory conversation history with persistent conversation IDs.
+- **Intent Classifier**: Uses LangGraph to classify user questions as labor law queries or general questions
+- **RAG Pipeline**: For labor law queries, retrieves relevant context from the knowledge base before generating responses
+- **General Q&A**: Handles general questions using a general-purpose language model
+- **Vector Database**: Stores embeddings of Colombian labor law documents (ChromaDB)
+- **LLM Integration**: Generates natural language responses using Groq/Gemini APIs
+- **Chat Interface**: Modern React-based UI with TypeScript and Vite
+- **Conversation Memory**: In-memory conversation history with persistent conversation IDs
 
 ## 🛠️ Tech Stack
 
 ### Backend
-- **LLM (Retrieval)**: Groq — llama-3.1-8b-instant
-- **LLM (Generation)**: Google Gemini
+- **LLM**: Groq (llama-3.1-8b-instant), with support for Google Gemini
 - **Framework**: LangGraph 0.2.0+ for AI agent workflows
 - **Vector Database**: ChromaDB (persistent local storage)
 - **Backend**: FastAPI with Uvicorn
-- **Language**: Python 3.11+
-- **Embeddings**: HuggingFace sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`)
-- **Additional Libraries**: Pydantic v2, LangChain, LangChain-Community
+- **Programming Language**: Python 3.11+
+- **Embeddings**: TODO: sentence-transformers (paraphrase-multilingual-MiniLM-L12-v2)
+- **Additional Libraries**: Pydantic, LangChain, httpx
 
 ### Frontend
 - **Framework**: React 18 with TypeScript
@@ -52,16 +50,10 @@ The system consists of:
 
 ## 📚 Data Sources
 
-The knowledge base includes 50+ official Colombian labor law documents, among them:
-
-- Código Sustantivo del Trabajo (Decreto 2158 de 1948)
-- Decreto 1072 de 2015 — Decreto Único Reglamentario del Sector Trabajo
-- Decreto 780 de 2016 — Sector Salud y Protección Social
-- Decreto 1833 de 2016 — Sistema General de Pensiones
-- Ley 100 de 1993 — Sistema de Seguridad Social Integral
-- Ley 1010 de 2006 — Acoso Laboral
-- Ley 2101 de 2021, Ley 2114 de 2021, Ley 2191 de 2022, Ley 2365 de 2024, and more
-- Multiple circulares and resoluciones from the Ministerio del Trabajo
+<!-- TODO: Specify the Colombian labor law sources used -->
+- Colombian Labor Code (Código Sustantivo del Trabajo)
+- TODO: Add specific legal databases and documents
+- TODO: Specify data collection and processing methods
 
 ## 🚀 Getting Started
 
@@ -70,8 +62,6 @@ The knowledge base includes 50+ official Colombian labor law documents, among th
 - Python 3.11 or newer
 - Node.js 18+ and npm
 - Git
-- A Groq API key ([console.groq.com](https://console.groq.com/))
-- A Google AI API key ([aistudio.google.com](https://aistudio.google.com/))
 
 ### Installation
 
@@ -84,6 +74,7 @@ cd spe-ai-labor-law-assistant
 ### Backend Setup
 
 ```bash
+# Navigate to the RAG backend directory
 cd rag
 
 # Create virtual environment
@@ -92,12 +83,20 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies and pre-commit hooks
 make setup
+
+# Or manually:
+# pip install --upgrade pip
+# pip install -e ".[dev]"
+# pre-commit install
 ```
 
 ### Frontend Setup
 
 ```bash
+# Navigate to the chat UI directory
 cd chat-ui
+
+# Install dependencies
 npm install
 ```
 
@@ -113,23 +112,23 @@ HOST=0.0.0.0
 PORT=8000
 ENV=dev
 
-# LLM Provider (mock, groq, gemini)
+# LLM Provider (mock, groq, gemini, or local)
 LLM_PROVIDER=groq
 
-# API Keys
+# API Keys (required for non-mock providers)
 GROQ_API_KEY=your_groq_api_key_here
-GOOGLE_API_KEY=your_google_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 
 # Vector Database
 VECTOR_DB=chroma
-CHROMA_DIR=./db_chroma
+CHROMA_DIR=./storage/chroma
 
 # Embeddings
 EMBEDDINGS_PROVIDER=local
 EMBEDDINGS_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
 # Data directory
-DATA_DIR=./app/data
+DATA_DIR=./data
 ```
 
 #### Frontend Configuration
@@ -137,17 +136,8 @@ DATA_DIR=./app/data
 Create a `.env` file in the `chat-ui/` directory:
 
 ```env
+# Backend API URL
 VITE_API_URL=http://localhost:8000
-```
-
-### Ingesting Documents
-
-Before first use, populate the vector database:
-
-```bash
-cd rag
-source .venv/bin/activate
-python -m app.rag.pipelines.run_ingestion
 ```
 
 ### Running the Application
@@ -252,12 +242,46 @@ npm run build
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development practices and contribution guidelines.
 
+## 📄 License
+
+<!-- TODO: Specify license -->
+TODO: Add license information (e.g., MIT, Apache 2.0, GPL-3.0)
+
+## 🗺️ Roadmap
+
+### Completed ✅
+- [x] Backend API with FastAPI
+- [x] Intent classification (labor law vs. general questions)
+- [x] General question answering capability
+- [x] Conversation history management with LangGraph
+- [x] React chat interface with modern UI components
+- [x] Integration with Groq and Gemini LLM providers
+- [x] Mock RAG for development
+
+### In Progress 🚧
+- [ ] Document ingestion pipeline for Colombian labor law corpus
+- [ ] Vector database integration with ChromaDB
+- [ ] Sentence-transformers embeddings implementation
+- [ ] Full RAG pipeline with actual document retrieval
+- [ ] Citation and reference system with source documents
+
+### Planned 📋
+- [ ] Multi-language support (Spanish/English interface)
+- [ ] Enhanced conversation context management
+- [ ] Document upload and custom corpus management
+- [ ] Advanced search filters and query refinement
+- [ ] Performance monitoring and analytics
+
+## 📧 Contact
+
+<!-- TODO: Add contact information -->
+TODO: Add maintainer contact information
+
 ## ⚠️ Disclaimer
 
 This chatbot is an educational/assistive tool and should not be considered as professional legal advice. For specific legal matters, please consult with a qualified legal professional.
 
 ## 🙏 Acknowledgments
 
-- Colombian labor law documents sourced from official government publications and the Ministerio del Trabajo.
-- Built with [LangChain](https://www.langchain.com/), [LangGraph](https://www.langchain.com/langgraph), [ChromaDB](https://www.trychroma.com/), [FastAPI](https://fastapi.tiangolo.com/), and [React](https://react.dev/).
-- Embeddings provided by [sentence-transformers](https://www.sbert.net/).
+<!-- TODO: Add acknowledgments -->
+- TODO: Credit data sources, libraries, and contributors

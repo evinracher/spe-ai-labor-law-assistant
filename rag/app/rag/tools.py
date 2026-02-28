@@ -1,706 +1,566 @@
-"""
-Formal Tools Implementation for SPE AI Labor Law Assistant
-===========================================================
-
-This module implements 5 explicit LangChain Tools that formalize core RAG 
-functionalities, ensuring compliance with the "5 Tools" rubric requirement.
-
-Each Tool is documented with:
-- Clear responsibility
-- LLM provider justification
-- Input/output schemas
-- Usage context in the workflow
-
-Tools Implemented:
-1. classify_intent - Intent classification (Gemini)
-2. semantic_search - Semantic retrieval from vector DB (Groq + Chroma)
-3. read_document - Full document access by metadata
-4. generate_grounded_answer - Answer generation with citations (Gemini)
-5. validate_answer - Quality assessment and hallucination detection
-"""
-
 from __future__ import annotations
-
 import os
+import re
 from typing import TYPE_CHECKING
-
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
-from pydantic import BaseModel, Field
-
 from app.core.config import settings
-from app.rag.retriever import recuperar_contexto_dinamico, formatear_documentos_para_gemini
-from app.api.schemas import Citation
-
 if TYPE_CHECKING:
-    from app.core.config import Settings
+    pass
 
 # ====================================================================
-# Module-level LLM & Vector DB Initialization
+# Module-level Vector DB Initialization
 # ====================================================================
 
 _RED = "\033[91m"
+_GREEN = "\033[92m"
+_YELLOW = "\033[93m"
 _RESET = "\033[0m"
 
 # Project paths
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _DB_CHROMA_PATH = os.path.join(_PROJECT_ROOT, "db_chroma")
 
-# LLM Instances
-groq_LLM = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0.2,
-    api_key=settings.GROQ_API_KEY,
-)
-print("✅ groq_LLM ready:", groq_LLM.model_name)
-
-gemini_LLM = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.1,
+# Vector Database (shared instance) - Google embedding-001
+_embeddings = GoogleGenerativeAIEmbeddings(
+    model="models/gemini-embedding-001",
+    task_type="RETRIEVAL_DOCUMENT",
     google_api_key=settings.GOOGLE_API_KEY
 )
-print("✅ gemini_LLM ready:", gemini_LLM.model)
+_vectorstore = Chroma(persist_directory=_DB_CHROMA_PATH, embedding_function=_embeddings)
 
-# Vector Database
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
-vectorstore = Chroma(persist_directory=_DB_CHROMA_PATH, embedding_function=embeddings)
-print("✅ vectorstore ready:", _DB_CHROMA_PATH)
-
-
-# ====================================================================
-# Tool 1: classify_intent
-# ====================================================================
-
-class IntentClassification(BaseModel):
-    """Structured output for intent classification."""
-    question: str = Field(description="The original user question.")
-    intent: str = Field(
-        description="Classified intent: domainSearch, summarize, compare, or generalSearch"
-    )
-    confidence: float = Field(
-        description="Confidence score (0.0-1.0) for the classification.",
-        ge=0.0,
-        le=1.0
-    )
-
+# Leyes principales y su estado de vigencia
+LAW_VIGENCY_DB = {
+    "ley 100 de 1993": {"vigente": True, "modificada_por": ["Ley 797 de 2003", "Ley 860 de 2003"]},
+    "codigo sustantivo del trabajo": {"vigente": True, "modificada_por": ["Múltiples reformas"]},
+    "ley 50 de 1990": {"vigente": True, "modificada_por": []},
+    "decreto 1072 de 2015": {"vigente": True, "modificada_por": ["Decreto 1563 de 2016"]},
+    "ley 789 de 2002": {"vigente": True, "modificada_por": []},
+    "ley 1010 de 2006": {"vigente": True, "modificada_por": []},  # Acoso laboral
+    "ley 1562 de 2012": {"vigente": True, "modificada_por": []},  # Riesgos laborales
+    "ley 2101 de 2021": {"vigente": True, "modificada_por": []},  # Reducción jornada laboral
+}
 
 @tool
-def classify_intent(question: str) -> dict:
+def search_by_law_number(law_identifier: str, max_results: int = 5) -> dict:
     """
-    Classify user intent to route to appropriate handler.
+    Busca fragmentos de una ley específica por su número o nombre.
     
-    **Responsibility:**
-    Determines whether the user query requires:
-    - domainSearch: Search in legal corpus for specific information
-    - summarize: Generate structured summary of a legal topic
-    - compare: Compare multiple legal concepts
-    - generalSearch: General knowledge response without RAG
-    
-    **LLM Provider: Google Gemini**
-    Justification: Gemini excels at semantic understanding and contextual 
-    classification. Superior to Groq for NLP classification tasks.
-    
-    **Input:**
-    - question: User's input query (string)
-    
-    **Output:**
-    - question: Normalized question
-    - intent: Classified intent category
-    - confidence: Confidence score (0.0-1.0)
-    
-    **Trace Information:**
-    - Model: gemini-2.5-flash
-    - Temperature: 0.1 (deterministic)
-    - Used in: Initial routing decision
+    A diferencia de la búsqueda semántica, esta herramienta busca 
+    directamente en los metadatos del documento por coincidencia exacta
+    del identificador de ley.
     
     Args:
-        question: The user's input query
+        law_identifier: Número o nombre de ley (ej: "Ley 100", "Decreto 1072", "CST")
+        max_results: Máximo de fragmentos a retornar (default: 5)
         
     Returns:
-        Dictionary with classified intent and confidence score
+        Dictionary con fragmentos encontrados y metadatos
+        
+    Casos de uso:
+        - "Dame los artículos de la Ley 100 de 1993"
+        - "Busca en el Decreto 1072"
+        - "Qué dice el Código Sustantivo del Trabajo"
     """
-    from app.rag.prompts import CLASSIFIER_PROMPT
-    
-    print(f"{_RED}[TOOL 1] classify_intent - Processing: {question[:50]}...{_RESET}")
+    print(f"{_GREEN}[TOOL 1] search_by_law_number - Buscando: {law_identifier}{_RESET}")
     
     try:
-        # Use Gemini with structured output for intent classification
-        classifier_chain = CLASSIFIER_PROMPT | gemini_LLM.with_structured_output(
-            IntentClassification
-        )
-        result = classifier_chain.invoke({"question": question})
+        # Normalizar el identificador
+        normalized = law_identifier.lower().strip()
+        
+        # Obtener todos los documentos y filtrar por doc_id
+        all_docs = _vectorstore.get(include=["documents", "metadatas"])
+        
+        matching_docs = []
+        if all_docs and all_docs.get("metadatas"):
+            for i, metadata in enumerate(all_docs["metadatas"]):
+                doc_id = metadata.get("doc_id", "").lower()
+                # Buscar coincidencia parcial en el nombre del documento
+                if normalized in doc_id or any(
+                    term in doc_id for term in normalized.split()
+                ):
+                    matching_docs.append({
+                        "content": all_docs["documents"][i][:500] + "...",
+                        "metadata": metadata,
+                        "chunk_id": metadata.get("chunk_id", "N/A"),
+                        "page": metadata.get("page", "N/A")
+                    })
+                    if len(matching_docs) >= max_results:
+                        break
         
         output = {
-            "question": result.question,
-            "intent": result.intent,
-            "confidence": result.confidence
+            "law_identifier": law_identifier,
+            "normalized_query": normalized,
+            "total_found": len(matching_docs),
+            "documents": matching_docs,
+            "source": "chroma_metadata_filter"
         }
         
-        print(f"{_RED}[TOOL 1] classify_intent - Result: intent={result.intent}, "
-              f"confidence={result.confidence:.2f}{_RESET}")
-        
+        print(f"{_GREEN}[TOOL 1] search_by_law_number - Encontrados: {len(matching_docs)}{_RESET}")
         return output
         
     except Exception as e:
-        print(f"{_RED}[TOOL 1] classify_intent - ERROR: {str(e)}{_RESET}")
+        print(f"{_RED}[TOOL 1] search_by_law_number - ERROR: {str(e)}{_RESET}")
         return {
-            "question": question,
-            "intent": "generalSearch",
-            "confidence": 0.5,
-            "error": str(e)
-        }
-
-
-# ====================================================================
-# Tool 2: semantic_search
-# ====================================================================
-
-class RetrievedDocument(BaseModel):
-    """Structure for retrieved documents from vector DB."""
-    doc_id: str = Field(description="Document identifier from metadata")
-    page: int | None = Field(description="Page number if available")
-    chunk_id: str = Field(description="Chunk identifier within document")
-    content: str = Field(description="Document text content")
-    metadata: dict = Field(description="Full metadata dictionary")
-
-
-@tool
-def semantic_search(query: str, top_k: int | None = None) -> dict:
-    """
-    Perform semantic search on Colombian labor law corpus.
-    
-    **Responsibility:**
-    Retrieves relevant legal documents from Chroma vector database using
-    semantic similarity. Dynamically determines top_k parameter using Groq
-    for intelligent query analysis.
-    
-    **LLM Provider: Groq (for top_k determination)**
-    Justification: Fast inference for meta-reasoning about query complexity.
-    Groq's speed ensures responsive retrieval pipeline.
-    
-    **Vector DB: Chroma with HuggingFace embeddings**
-    Model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-    Justification: Multilingual support for Spanish/English legal documents.
-    
-    **Input:**
-    - query: Search query in natural language
-    - top_k: Optional override for result count (default: dynamic)
-    
-    **Output:**
-    - query: The processed search query
-    - top_k_used: Actual k value used for retrieval
-    - documents: List of retrieved documents with metadata
-    - total_results: Number of results returned
-    
-    **Trace Information:**
-    - Vector DB: Chroma
-    - Embeddings: paraphrase-multilingual-MiniLM-L12-v2
-    - Dynamic k: Determined by Groq analysis
-    
-    Args:
-        query: Search query for legal documents
-        top_k: Optional override for number of results
-        
-    Returns:
-        Dictionary with retrieved documents and metadata
-    """
-    print(f"{_RED}[TOOL 2] semantic_search - Query: {query[:60]}...{_RESET}")
-    
-    try:
-        # Use Groq to dynamically determine top_k if not provided
-        if top_k is None:
-            analysis_prompt = (
-                f"You are a legal expert. Given this user query: '{query}'\n"
-                f"Determine how many law fragments (between 1 and 10) we need to retrieve "
-                f"to fully answer it. If it is very specific, choose 2 or 4. "
-                f"If it is very broad, choose 8 or 10.\n"
-                f"Respond with ONLY a single integer number."
-            )
-            k_response = groq_LLM.invoke(analysis_prompt)
-            try:
-                top_k = int(k_response.content.strip().split()[-1])  # Extract last number
-                top_k = max(1, min(top_k, 10))  # Clamp to 1-10
-            except (ValueError, AttributeError, IndexError):
-                top_k = 4  # Fallback default
-        
-        print(f"{_RED}[TOOL 2] semantic_search - Using top_k={top_k}{_RESET}")
-        
-        # Retrieve from Chroma using similarity_search
-        retrieved_documents = vectorstore.similarity_search(query, k=top_k)
-        
-        # Format for return
-        retrieved_docs = []
-        for doc in retrieved_documents:
-            retrieved_docs.append({
-                "doc_id": doc.metadata.get("doc_id", "unknown"),
-                "page": doc.metadata.get("page"),
-                "chunk_id": doc.metadata.get("chunk_id", "N/A"),
-                "content": doc.page_content,
-                "metadata": doc.metadata
-            })
-        
-        output = {
-            "query": query,
-            "top_k_used": top_k,
-            "documents": retrieved_docs,
-            "total_results": len(retrieved_docs)
-        }
-        
-        print(f"{_RED}[TOOL 2] semantic_search - Retrieved {len(retrieved_docs)} documents{_RESET}")
-        
-        return output
-        
-    except Exception as e:
-        print(f"{_RED}[TOOL 2] semantic_search - ERROR: {str(e)}{_RESET}")
-        return {
-            "query": query,
-            "top_k_used": 0,
+            "law_identifier": law_identifier,
+            "total_found": 0,
             "documents": [],
-            "total_results": 0,
             "error": str(e)
         }
 
-
-# ====================================================================
-# Tool 3: read_document
-# ====================================================================
-
 @tool
-def read_document(doc_id: str, page: int | None = None) -> dict:
+def get_article_text(article_number: str, law_name: str = "") -> dict:
     """
-    Read full document or specific page from vector DB by metadata.
+    Obtiene el texto completo de un artículo específico de una ley.
     
-    **Responsibility:**
-    Provides direct access to complete documents or specific pages from
-    the legal corpus. Enables detailed analysis for summarization and
-    comparison tasks. Strengthens traceability by linking back to original sources.
-    
-    **Implementation:**
-    Queries Chroma vector DB using doc_id and optional page filter.
-    Returns aggregated content with full metadata preservation.
-    
-    **Input:**
-    - doc_id: Document identifier (from semantic_search metadata)
-    - page: Optional page number for partial retrieval
-    
-    **Output:**
-    - doc_id: Requested document ID
-    - page: Requested page (if specified)
-    - content: Full document or page text
-    - metadata: Complete metadata including source, date, etc.
-    - chunks_count: Number of chunks/sections in result
-    
-    **Use Cases:**
-    - Deep dive analysis for comprehensive summaries
-    - Full context for comparison of multiple articles
-    - Source verification and citation accuracy
+    Usa búsqueda semántica optimizada para encontrar artículos exactos,
+    combinando el número de artículo con el contexto de la ley.
     
     Args:
-        doc_id: Document identifier
-        page: Optional page number
+        article_number: Número del artículo (ej: "64", "127", "306")
+        law_name: Nombre de la ley (opcional, ej: "Código Sustantivo del Trabajo")
         
     Returns:
-        Dictionary with document content and metadata
+        Dictionary con el texto del artículo y metadatos
+        
+    Casos de uso:
+        - "Artículo 64 del CST" (indemnización por despido)
+        - "Artículo 127 del Código Sustantivo" (definición de salario)
+        - "Dame el artículo 306" (prima de servicios)
     """
-    print(f"{_RED}[TOOL 3] read_document - doc_id={doc_id}, page={page}{_RESET}")
+    print(f"{_GREEN}[TOOL 2] get_article_text - Art. {article_number} de {law_name or 'cualquier ley'}{_RESET}")
     
     try:
-        # Query Chroma using get method with where filter
-        results = vectorstore.get(
-            where={"doc_id": doc_id} if page is None else {"doc_id": doc_id, "page": page}
-        )
+        # Construir múltiples queries para mejorar recall
+        queries = [
+            f"ARTÍCULO {article_number}",
+            f"articulo {article_number} {law_name}" if law_name else f"articulo {article_number}",
+        ]
         
-        if not results or not results.get("documents"):
-            # Fallback: try similarity search with doc_id as query
-            print(f"{_RED}[TOOL 3] read_document - Using fallback search{_RESET}")
+        # Buscar con múltiples queries y k más alto
+        all_results = []
+        for query in queries:
+            results = _vectorstore.similarity_search(query, k=10)
+            all_results.extend(results)
+        
+        # Filtrar resultados que contengan el número de artículo exacto
+        article_pattern = rf"ART[ÍI]CULO\s*{article_number}[.\s\-\:]"
+        matching_results = []
+        seen_chunks = set()
+        
+        for doc in all_results:
+            chunk_id = doc.metadata.get("chunk_id", "")
+            if chunk_id in seen_chunks:
+                continue
+            seen_chunks.add(chunk_id)
+            
+            # Verificar si el artículo está en el contenido
+            if re.search(article_pattern, doc.page_content, re.IGNORECASE):
+                # Si se especificó ley, filtrar por documento
+                if law_name:
+                    doc_id_lower = doc.metadata.get("doc_id", "").lower()
+                    if not any(term in doc_id_lower for term in law_name.lower().split()):
+                        continue
+                        
+                matching_results.append({
+                    "content": doc.page_content,
+                    "source": doc.metadata.get("doc_id", "Unknown"),
+                    "page": doc.metadata.get("page"),
+                    "chunk_id": chunk_id
+                })
+        
+        # Si no hay coincidencia exacta, intentar búsqueda más amplia
+        if not matching_results:
+            # Buscar en todos los documentos con filtro de metadatos
+            all_docs = _vectorstore.get(include=["documents", "metadatas"])
+            for i, content in enumerate(all_docs.get("documents", [])):
+                if re.search(article_pattern, content, re.IGNORECASE):
+                    metadata = all_docs["metadatas"][i]
+                    if law_name:
+                        doc_id_lower = metadata.get("doc_id", "").lower()
+                        if not any(term in doc_id_lower for term in law_name.lower().split()):
+                            continue
+                    matching_results.append({
+                        "content": content,
+                        "source": metadata.get("doc_id", "Unknown"),
+                        "page": metadata.get("page"),
+                        "chunk_id": metadata.get("chunk_id", "N/A")
+                    })
+                    if len(matching_results) >= 3:
+                        break
+        
+        output = {
+            "article_number": article_number,
+            "law_name": law_name or "No especificada",
+            "found": len(matching_results) > 0,
+            "results": matching_results[:3],  # Máximo 3 resultados
+            "search_query_used": queries[0]
+        }
+        
+        print(f"{_GREEN}[TOOL 2] get_article_text - Encontrado: {output['found']} ({len(matching_results)} chunks){_RESET}")
+        return output
+        
+    except Exception as e:
+        print(f"{_RED}[TOOL 2] get_article_text - ERROR: {str(e)}{_RESET}")
+        return {
+            "article_number": article_number,
+            "law_name": law_name,
+            "found": False,
+            "results": [],
+            "error": str(e)
+        }
+
+@tool
+def list_laws_by_topic(topic: str, max_results: int = 10) -> dict:
+    """
+    Lista las leyes y decretos relacionados con un tema específico.
+    
+    Realiza búsqueda semántica y agrupa los resultados por documento
+    fuente, proporcionando un resumen de qué leyes tratan el tema.
+    
+    Args:
+        topic: Tema a buscar (ej: "despido", "vacaciones", "pensiones")
+        max_results: Máximo de leyes únicas a retornar (default: 10)
+        
+    Returns:
+        Dictionary con lista de leyes relacionadas al tema
+        
+    Casos de uso:
+        - "Qué leyes hablan sobre pensiones"
+        - "Normatividad sobre acoso laboral"
+        - "Leyes de maternidad y paternidad"
+    """
+    print(f"{_GREEN}[TOOL 3] list_laws_by_topic - Tema: {topic}{_RESET}")
+    
+    try:
+        # Búsqueda semántica amplia
+        results = _vectorstore.similarity_search(topic, k=20)
+        
+        # Agrupar por documento fuente
+        laws_found = {}
+        for doc in results:
+            doc_id = doc.metadata.get("doc_id", "Unknown")
+            if doc_id not in laws_found:
+                laws_found[doc_id] = {
+                    "doc_id": doc_id,
+                    "mentions": 1,
+                    "sample_content": doc.page_content[:300] + "...",
+                    "pages_found": [doc.metadata.get("page")]
+                }
+            else:
+                laws_found[doc_id]["mentions"] += 1
+                page = doc.metadata.get("page")
+                if page and page not in laws_found[doc_id]["pages_found"]:
+                    laws_found[doc_id]["pages_found"].append(page)
+        
+        # Ordenar por número de menciones (relevancia implícita)
+        sorted_laws = sorted(
+            laws_found.values(), 
+            key=lambda x: x["mentions"], 
+            reverse=True
+        )[:max_results]
+        
+        output = {
+            "topic": topic,
+            "total_laws_found": len(sorted_laws),
+            "laws": sorted_laws,
+            "search_depth": 20
+        }
+        
+        print(f"{_GREEN}[TOOL 3] list_laws_by_topic - Leyes encontradas: {len(sorted_laws)}{_RESET}")
+        return output
+        
+    except Exception as e:
+        print(f"{_RED}[TOOL 3] list_laws_by_topic - ERROR: {str(e)}{_RESET}")
+        return {
+            "topic": topic,
+            "total_laws_found": 0,
+            "laws": [],
+            "error": str(e)
+        }
+
+@tool
+def get_document_metadata(doc_id: str) -> dict:
+    """
+    Obtiene los metadatos completos de un documento sin cargar el contenido.
+    
+    Útil para obtener información sobre el documento (páginas, chunks, 
+    fecha, etc.) sin consumir tokens con el contenido completo.
+    
+    Args:
+        doc_id: Identificador del documento (path o nombre)
+        
+    Returns:
+        Dictionary con metadatos del documento
+        
+    Casos de uso:
+        - Verificar de qué documento proviene una citación
+        - Conocer la estructura de un documento antes de leerlo
+        - Obtener información de trazabilidad
+    """
+    print(f"{_GREEN}[TOOL 4] get_document_metadata - doc_id: {doc_id}{_RESET}")
+    
+    try:
+        # Obtener todos los chunks del documento
+        all_data = _vectorstore.get(include=["metadatas"])
+        
+        doc_chunks = []
+        pages_set = set()
+        
+        if all_data and all_data.get("metadatas"):
+            for metadata in all_data["metadatas"]:
+                if doc_id.lower() in metadata.get("doc_id", "").lower():
+                    doc_chunks.append(metadata)
+                    if metadata.get("page"):
+                        pages_set.add(metadata["page"])
+        
+        if not doc_chunks:
             return {
                 "doc_id": doc_id,
-                "page": page,
-                "content": "Document not found in vector DB",
-                "metadata": {},
-                "chunks_count": 0,
-                "error": "No matching document found"
+                "found": False,
+                "error": "Documento no encontrado en la base vectorial"
             }
-        
-        # Aggregate content and metadata
-        aggregated_content = "\n\n--- CHUNK SEPARATOR ---\n\n".join(
-            results.get("documents", [])
-        )
-        aggregated_metadata = {}
-        if results.get("metadatas") and len(results["metadatas"]) > 0:
-            aggregated_metadata = results["metadatas"][0]
         
         output = {
             "doc_id": doc_id,
-            "page": page,
-            "content": aggregated_content,
-            "metadata": aggregated_metadata,
-            "chunks_count": len(results.get("documents", []))
+            "found": True,
+            "total_chunks": len(doc_chunks),
+            "total_pages": len(pages_set),
+            "pages": sorted(list(pages_set)) if pages_set else [],
+            "sample_metadata": doc_chunks[0] if doc_chunks else {},
+            "chunk_ids": [c.get("chunk_id") for c in doc_chunks[:10]]  # Primeros 10
         }
         
-        print(f"{_RED}[TOOL 3] read_document - Retrieved {output['chunks_count']} chunks{_RESET}")
-        
+        print(f"{_GREEN}[TOOL 4] get_document_metadata - Chunks: {len(doc_chunks)}, Pages: {len(pages_set)}{_RESET}")
         return output
         
     except Exception as e:
-        print(f"{_RED}[TOOL 3] read_document - ERROR: {str(e)}{_RESET}")
+        print(f"{_RED}[TOOL 4] get_document_metadata - ERROR: {str(e)}{_RESET}")
         return {
             "doc_id": doc_id,
-            "page": page,
-            "content": "",
-            "metadata": {},
-            "chunks_count": 0,
+            "found": False,
             "error": str(e)
         }
 
-
-# ====================================================================
-# Tool 4: generate_grounded_answer
-# ====================================================================
-
 @tool
-def generate_grounded_answer(
-    question: str,
-    context: str,
-    intent: str,
-    documents: list | None = None
-) -> dict:
+def check_law_vigency(law_name: str) -> dict:
     """
-    Generate answer grounded exclusively in retrieved context.
+    Verifica si una ley o decreto está vigente y si ha sido modificado.
     
-    **Responsibility:**
-    Produces the final answer based strictly on provided legal context.
-    Ensures grounding by refusing to extrapolate beyond context.
-    Includes citations preserving full metadata for traceability.
-    
-    **LLM Provider: Google Gemini**
-    Justification: Superior at nuanced legal language generation and
-    citation formatting. Better at maintaining semantic accuracy while
-    following strict context constraints.
-    
-    **Input:**
-    - question: Original user question
-    - context: Formatted legal context from semantic_search
-    - intent: User intent (to tailor response structure)
-    - documents: Optional list of source documents for citations
-    
-    **Output:**
-    - answer: Generated response in Spanish
-    - citations: List of Citation objects with source metadata
-    - tokens_used: Approximate token count
-    - truncated: Boolean indicating if context was truncated
-    
-    **Grounding Guarantee:**
-    - Explicit instruction to use ONLY provided context
-    - No extrapolation beyond retrieved documents
-    - All claims backed by citations
-    - Language fully in Spanish for Colombian audience
+    Consulta una base de datos de referencia con el estado de las 
+    principales normas laborales colombianas.
     
     Args:
-        question: User's original question
-        context: Formatted legal context
-        intent: Classified intent (domainSearch, summarize, compare)
-        documents: Optional list of source documents
+        law_name: Nombre de la ley (ej: "Ley 100 de 1993", "Decreto 1072")
         
     Returns:
-        Dictionary with generated answer and citations
+        Dictionary con estado de vigencia y modificaciones
+        
+    Casos de uso:
+        - "¿La Ley 100 de 1993 sigue vigente?"
+        - "¿El Decreto 1072 ha sido modificado?"
+        - Validar que una citación no sea de ley derogada
     """
-    print(f"{_RED}[TOOL 4] generate_grounded_answer - Processing...{_RESET}")
+    print(f"{_GREEN}[TOOL 5] check_law_vigency - Consultando: {law_name}{_RESET}")
     
     try:
-        # Build context-aware instruction based on intent
-        intent_instructions = {
-            "domainSearch": (
-                "Act as an expert in Colombian labor law. Answer the user's "
-                "question directly, precisely, and grounded strictly in the provided law. "
-                "Make sure to cite relevant articles, laws, or decrees using metadata."
-            ),
-            "summarize": (
-                "Act as a legal analyst. Generate a clear, structured, and easy-to-understand "
-                "summary of the consulted topic. Use bullet points if necessary for readability."
-            ),
-            "compare": (
-                "Act as an expert in Colombian labor law. Compare the legal concepts requested "
-                "by the user in a structured way. Organize response into: "
-                "1. Definición de los conceptos, 2. Diferencias clave, 3. Implicaciones legales."
-            ),
-            "generalSearch": (
-                "Act as a helpful legal assistant. Provide a general response based on "
-                "the provided context if available."
-            )
-        }
+        normalized = law_name.lower().strip()
         
-        specific_instruction = intent_instructions.get(
-            intent,
-            intent_instructions["domainSearch"]
-        )
+        # Buscar en la base de vigencias
+        found_law = None
+        for key, value in LAW_VIGENCY_DB.items():
+            if key in normalized or normalized in key:
+                found_law = {"name": key, **value}
+                break
         
-        # Build final prompt
-        final_prompt = (
-            f"You are a legal expert specialized in Colombian labor law.\n\n"
-            f"SYSTEM INSTRUCTION: {specific_instruction}\n\n"
-            f"USER QUESTION: {question}\n"
-            f"RETRIEVED LEGAL CONTEXT (In Spanish):\n{context}\n\n"
-            f"REQUIREMENTS:\n"
-            f"- Base your answer STRICTLY on the retrieved context above.\n"
-            f"- Include citations using the document metadata.\n"
-            f"- Output the final response entirely in SPANISH.\n"
-            f"- Do NOT extrapolate or use knowledge outside the provided context."
-        )
+        if found_law:
+            output = {
+                "law_name": law_name,
+                "found_in_db": True,
+                "vigente": found_law["vigente"],
+                "modificada_por": found_law.get("modificada_por", []),
+                "warning": None if found_law["vigente"] else "Esta ley puede estar derogada",
+                "recommendation": "Verificar en SUIN-Juriscol para información actualizada"
+            }
+        else:
+            output = {
+                "law_name": law_name,
+                "found_in_db": False,
+                "vigente": None,
+                "warning": "Ley no encontrada en base de referencia. Verificar manualmente.",
+                "recommendation": "Consultar SUIN-Juriscol: https://www.suin-juriscol.gov.co/"
+            }
         
-        # Generate with Gemini
-        response = gemini_LLM.invoke(final_prompt)
-        answer_text = response.content
-        
-        # Build citations from documents if provided
-        citations_list = []
-        if documents:
-            for doc in documents:
-                # Handle both dict and object formats
-                if isinstance(doc, dict):
-                    metadata = doc.get("metadata", {})
-                    citation = Citation(
-                        source=metadata.get("doc_id", "Unknown"),
-                        page=metadata.get("page"),
-                        chunk_id=metadata.get("chunk_id", "N/A"),
-                        snippet=doc.get("content", "")[:250] + "..."
-                    )
-                else:
-                    citation = Citation(
-                        source=doc.metadata.get("doc_id", "Unknown"),
-                        page=doc.metadata.get("page"),
-                        chunk_id=doc.metadata.get("chunk_id", "N/A"),
-                        snippet=doc.page_content[:250] + "..."
-                    )
-                citations_list.append(citation)
-        
-        output = {
-            "answer": answer_text,
-            "citations": [c.dict() for c in citations_list],
-            "tokens_used": len(answer_text.split()),  # Approximate
-            "truncated": len(context) > 10000,
-            "intent_used": intent
-        }
-        
-        print(f"{_RED}[TOOL 4] generate_grounded_answer - Generated {len(citations_list)} citations{_RESET}")
-        
+        print(f"{_GREEN}[TOOL 5] check_law_vigency - Vigente: {output.get('vigente', 'Desconocido')}{_RESET}")
         return output
         
     except Exception as e:
-        print(f"{_RED}[TOOL 4] generate_grounded_answer - ERROR: {str(e)}{_RESET}")
+        print(f"{_RED}[TOOL 5] check_law_vigency - ERROR: {str(e)}{_RESET}")
         return {
-            "answer": f"Error generating answer: {str(e)}",
-            "citations": [],
-            "tokens_used": 0,
-            "truncated": False,
+            "law_name": law_name,
+            "found_in_db": False,
             "error": str(e)
         }
 
-
-# ====================================================================
-# Tool 5: validate_answer
-# ====================================================================
-
-class ValidationResult(BaseModel):
-    """Structure for answer validation output."""
-    is_valid: bool = Field(description="Whether answer passes quality checks")
-    coherence_score: float = Field(
-        description="Coherence score (0.0-1.0)",
-        ge=0.0,
-        le=1.0
-    )
-    grounding_score: float = Field(
-        description="How well-grounded in context (0.0-1.0)",
-        ge=0.0,
-        le=1.0
-    )
-    hallucination_detected: bool = Field(
-        description="Whether extrapolation/hallucination was detected"
-    )
-    completeness_score: float = Field(
-        description="Whether answer fully addresses question (0.0-1.0)",
-        ge=0.0,
-        le=1.0
-    )
-    reason: str = Field(description="Detailed reason for validation decision")
-
-
 @tool
-def validate_answer(
-    question: str,
-    answer: str,
-    context: str
-) -> dict:
+def find_related_jurisprudence(legal_topic: str, max_results: int = 5) -> dict:
     """
-    Validate answer quality and detect hallucinations.
+    Busca sentencias y jurisprudencia relacionada a un tema legal.
     
-    **Responsibility:**
-    Evaluates generated answer against multiple criteria:
-    1. Coherence: Is response logically structured?
-    2. Grounding: Is answer backed by provided context?
-    3. Hallucination: Does answer extrapolate or fabricate?
-    4. Completeness: Does answer address the full question?
-    
-    **LLM Provider: Google Gemini**
-    Justification: Superior at nuanced reasoning about text quality,
-    semantic alignment, and detection of implicit extrapolation.
-    
-    **Input:**
-    - question: Original user question
-    - answer: Generated answer to validate
-    - context: Retrieved context used for grounding check
-    
-    **Output:**
-    - is_valid: Boolean validation result
-    - coherence_score: 0.0-1.0 score
-    - grounding_score: How well-grounded in context
-    - hallucination_detected: Boolean flag
-    - completeness_score: How fully question is addressed
-    - reason: Detailed explanation for decision
-    
-    **Validation Loop Integration:**
-    Returns is_valid=False when:
-    - Answer contains obvious hallucinations
-    - Incoherent or irrelevant response
-    - Insufficient grounding in context
-    - Incomplete answer to question
-    
-    Can trigger retry through rag_node for refinement.
+    Realiza búsqueda semántica filtrando por documentos que contengan
+    términos típicos de jurisprudencia (sentencia, corte, tutela, etc.)
     
     Args:
-        question: Original user question
-        answer: Generated answer text
-        context: Retrieved context for comparison
+        legal_topic: Tema legal a buscar jurisprudencia
+        max_results: Máximo de sentencias a retornar
         
     Returns:
-        Dictionary with detailed validation scores and decision
+        Dictionary con sentencias relacionadas
+        
+    Casos de uso:
+        - "Jurisprudencia sobre estabilidad laboral reforzada"
+        - "Sentencias de la Corte sobre despido sin justa causa"
+        - "Tutelas sobre acoso laboral"
     """
-    print(f"{_RED}[TOOL 5] validate_answer - Evaluating answer quality...{_RESET}")
+    print(f"{_GREEN}[TOOL 6] find_related_jurisprudence - Tema: {legal_topic}{_RESET}")
     
     try:
-        # Build validation prompt
-        validation_prompt = (
-            f"You are an expert evaluator for legal document responses.\n\n"
-            f"ORIGINAL QUESTION: {question}\n\n"
-            f"RETRIEVED CONTEXT:\n{context}\n\n"
-            f"GENERATED ANSWER:\n{answer}\n\n"
-            f"Evaluate this response on these criteria:\n"
-            f"1. COHERENCE: Is the response logically structured and easy to follow?\n"
-            f"2. GROUNDING: Is every claim backed by the provided context?\n"
-            f"3. HALLUCINATION: Does the response extrapolate or fabricate beyond context?\n"
-            f"4. COMPLETENESS: Does the response fully address the original question?\n\n"
-            f"Respond with JSON:\n"
-            f'{{\n'
-            f'  "coherence_score": <0.0-1.0>,\n'
-            f'  "grounding_score": <0.0-1.0>,\n'
-            f'  "hallucination_detected": <true|false>,\n'
-            f'  "completeness_score": <0.0-1.0>,\n'
-            f'  "reason": "<detailed explanation>"\n'
-            f'}}'
-        )
+        # Búsqueda semántica con términos de jurisprudencia
+        search_query = f"sentencia corte jurisprudencia {legal_topic}"
+        results = _vectorstore.similarity_search(search_query, k=15)
         
-        response = gemini_LLM.invoke(validation_prompt)
+        # Filtrar documentos que parezcan ser jurisprudencia
+        jurisprudence_keywords = [
+            "sentencia", "corte", "tutela", "c-", "t-", "su-", 
+            "magistrado", "demandante", "demandado", "fallo"
+        ]
         
-        # Parse response (with fallback)
-        try:
-            import json
-            result_text = response.content
-            # Extract JSON from response
-            json_start = result_text.find('{')
-            json_end = result_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                json_str = result_text[json_start:json_end]
-                eval_result = json.loads(json_str)
-            else:
-                # Fallback if JSON not found
-                eval_result = {
-                    "coherence_score": 0.5,
-                    "grounding_score": 0.5,
-                    "hallucination_detected": False,
-                    "completeness_score": 0.5,
-                    "reason": "Could not parse detailed evaluation"
-                }
-        except json.JSONDecodeError:
-            eval_result = {
-                "coherence_score": 0.5,
-                "grounding_score": 0.5,
-                "hallucination_detected": False,
-                "completeness_score": 0.5,
-                "reason": "JSON parsing error in validation"
-            }
+        jurisprudence_results = []
+        for doc in results:
+            content_lower = doc.page_content.lower()
+            doc_id_lower = doc.metadata.get("doc_id", "").lower()
+            
+            # Verificar si contiene términos de jurisprudencia
+            if any(kw in content_lower or kw in doc_id_lower for kw in jurisprudence_keywords):
+                jurisprudence_results.append({
+                    "content": doc.page_content[:400] + "...",
+                    "source": doc.metadata.get("doc_id", "Unknown"),
+                    "page": doc.metadata.get("page"),
+                    "likely_type": "Sentencia/Jurisprudencia"
+                })
+                if len(jurisprudence_results) >= max_results:
+                    break
         
-        # Determine overall validity
-        is_valid = (
-            eval_result.get("coherence_score", 0) >= 0.7 and
-            eval_result.get("grounding_score", 0) >= 0.6 and
-            not eval_result.get("hallucination_detected", False) and
-            eval_result.get("completeness_score", 0) >= 0.7
-        )
+        # Si no hay jurisprudencia específica, indicarlo
+        if not jurisprudence_results:
+            # Retornar resultados generales como alternativa
+            jurisprudence_results = [{
+                "content": doc.page_content[:400] + "...",
+                "source": doc.metadata.get("doc_id", "Unknown"),
+                "page": doc.metadata.get("page"),
+                "likely_type": "Normatividad general (no jurisprudencia específica)"
+            } for doc in results[:max_results]]
         
         output = {
-            "is_valid": is_valid,
-            "coherence_score": eval_result.get("coherence_score", 0.5),
-            "grounding_score": eval_result.get("grounding_score", 0.5),
-            "hallucination_detected": eval_result.get("hallucination_detected", False),
-            "completeness_score": eval_result.get("completeness_score", 0.5),
-            "reason": eval_result.get("reason", "Validation completed"),
-            "threshold_results": {
-                "coherence_pass": eval_result.get("coherence_score", 0) >= 0.7,
-                "grounding_pass": eval_result.get("grounding_score", 0) >= 0.6,
-                "no_hallucination": not eval_result.get("hallucination_detected", False),
-                "completeness_pass": eval_result.get("completeness_score", 0) >= 0.7
-            }
+            "topic": legal_topic,
+            "total_found": len(jurisprudence_results),
+            "jurisprudence": jurisprudence_results,
+            "note": "Resultados basados en búsqueda semántica del corpus disponible"
         }
         
-        print(f"{_RED}[TOOL 5] validate_answer - Valid: {is_valid}, "
-              f"Hallucination: {eval_result.get('hallucination_detected', False)}{_RESET}")
-        
+        print(f"{_GREEN}[TOOL 6] find_related_jurisprudence - Encontradas: {len(jurisprudence_results)}{_RESET}")
         return output
         
     except Exception as e:
-        print(f"{_RED}[TOOL 5] validate_answer - ERROR: {str(e)}{_RESET}")
+        print(f"{_RED}[TOOL 6] find_related_jurisprudence - ERROR: {str(e)}{_RESET}")
         return {
-            "is_valid": False,
-            "coherence_score": 0.0,
-            "grounding_score": 0.0,
-            "hallucination_detected": True,
-            "completeness_score": 0.0,
-            "reason": f"Validation error: {str(e)}",
+            "topic": legal_topic,
+            "total_found": 0,
+            "jurisprudence": [],
             "error": str(e)
         }
 
-
-# ====================================================================
-# Tools Registry for Export
-# ====================================================================
+@tool
+def verify_citation_exists(law_name: str, article_number: str) -> dict:
+    """
+    Verifica que una citación legal (Ley X, Artículo Y) existe en el corpus.
+    
+    Herramienta anti-alucinación: confirma que las referencias legales
+    citadas por el LLM realmente existen en la base de conocimiento.
+    
+    Args:
+        law_name: Nombre de la ley citada
+        article_number: Número de artículo citado
+        
+    Returns:
+        Dictionary indicando si la citación es válida
+        
+    Casos de uso:
+        - Validar que "Artículo 64 del CST" existe
+        - Verificar citaciones en respuestas generadas
+        - Control de calidad para evitar hallucinations
+    """
+    print(f"{_GREEN}[TOOL 7] verify_citation_exists - {law_name}, Art. {article_number}{_RESET}")
+    
+    try:
+        # Construir query específica
+        search_query = f"ARTÍCULO {article_number} {law_name}"
+        results = _vectorstore.similarity_search(search_query, k=5)
+        
+        # Verificar coincidencia del artículo
+        article_pattern = rf"ART[ÍI]CULO\s*{article_number}[.\s\-\:]"
+        
+        verified = False
+        matching_content = None
+        source_doc = None
+        
+        for doc in results:
+            if re.search(article_pattern, doc.page_content, re.IGNORECASE):
+                verified = True
+                matching_content = doc.page_content[:300] + "..."
+                source_doc = doc.metadata.get("doc_id", "Unknown")
+                break
+        
+        output = {
+            "law_name": law_name,
+            "article_number": article_number,
+            "citation_verified": verified,
+            "source_document": source_doc,
+            "matching_excerpt": matching_content,
+            "confidence": "high" if verified else "not_found",
+            "recommendation": None if verified else "La citación no se encontró. Verificar manualmente."
+        }
+        
+        status = "VERIFICADA" if verified else "NO ENCONTRADA"
+        print(f"{_GREEN}[TOOL 7] verify_citation_exists - {status}{_RESET}")
+        return output
+        
+    except Exception as e:
+        print(f"{_RED}[TOOL 7] verify_citation_exists - ERROR: {str(e)}{_RESET}")
+        return {
+            "law_name": law_name,
+            "article_number": article_number,
+            "citation_verified": False,
+            "error": str(e)
+        }
 
 TOOLS_LIST = [
-    classify_intent,
-    semantic_search,
-    read_document,
-    generate_grounded_answer,
-    validate_answer
+    search_by_law_number,
+    get_article_text,
+    list_laws_by_topic,
+    get_document_metadata,
+    check_law_vigency,
+    find_related_jurisprudence,
+    verify_citation_exists,
 ]
 
 TOOLS_DICT = {
-    "classify_intent": classify_intent,
-    "semantic_search": semantic_search,
-    "read_document": read_document,
-    "generate_grounded_answer": generate_grounded_answer,
-    "validate_answer": validate_answer
+    "search_by_law_number": search_by_law_number,
+    "get_article_text": get_article_text,
+    "list_laws_by_topic": list_laws_by_topic,
+    "get_document_metadata": get_document_metadata,
+    "check_law_vigency": check_law_vigency,
+    "find_related_jurisprudence": find_related_jurisprudence,
+    "verify_citation_exists": verify_citation_exists,
 }
-
-print("\n" + "="*70)
-print("✅ 5 FORMAL TOOLS REGISTERED SUCCESSFULLY")
-print("="*70)
-print("1. classify_intent - Intent classification (Gemini)")
-print("2. semantic_search - Semantic retrieval (Groq + Chroma)")
-print("3. read_document - Full document access")
-print("4. generate_grounded_answer - Answer generation with citations (Gemini)")
-print("5. validate_answer - Quality assessment (Gemini)")
-print("="*70 + "\n")
