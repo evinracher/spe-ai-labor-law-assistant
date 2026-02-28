@@ -309,6 +309,14 @@ Groq fue seleccionado específicamente para las tareas de **meta-razonamiento r�
 
 ## 5. Diseño del grafo LangGraph
 
+### 5.0 Diseño inicial del grafo (v2)
+
+La siguiente imagen muestra el diseño inicial (versión 2) del grafo LangGraph, elaborado durante la fase de planificación del sistema. Presenta la propuesta original de nodos, flujo de trabajo y el estado de la cadena (`GraphState`) junto con las transformaciones que sufre a medida que el mensaje avanza entre nodos.
+
+![Diseño inicial del grafo LangGraph v2](examples/initial-design-v2.png)
+
+*Figura 3: Diseño inicial v2 del grafo LangGraph. Se muestran los nodos propuestos, el flujo de enrutamiento según intención y la evolución del estado de la cadena (`GraphState`) en cada transición. Este diseño sirvió como referencia para la implementación final descrita en las secciones siguientes.*
+
 ### 5.1 Nodos del grafo
 
 | Nodo | Tipo | Herramienta usada | Descripción |
