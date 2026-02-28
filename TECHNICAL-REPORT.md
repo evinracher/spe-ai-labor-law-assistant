@@ -45,47 +45,10 @@ El **Asistente de Derecho Laboral Colombiano** es un chatbot conversacional basa
 
 ### 2.1 Visión de componentes
 
-```
-┌─────────────────────────────────┐
-│          React Chat UI          │  Vite + TypeScript + TailwindCSS
-└───────────────┬─────────────────┘
-                │ POST /chat (JSON)
-┌───────────────▼─────────────────┐
-│       FastAPI  (uvicorn)        │  Python 3.11+
-│  - POST /chat  - GET /health    │
-└───────────────┬─────────────────┘
-                │
-┌───────────────▼─────────────────┐
-│         LangGraph Agent         │
-│  ┌──────────────────────────┐   │
-│  │     classifier_node      │◄──┤ Tool 1: classify_intent (Gemini)
-│  └──────┬──────┬───────┬────┘   │
-│         │      │       │        │
-│  ┌──────▼──┐ ┌─▼────┐ ┌▼─────┐ │
-│  │domain_  │ │summ_ │ │comp_ │ │
-│  │search_  │ │arize_│ │are_  │ │
-│  │node     │ │node  │ │node  │ │
-│  └──────┬──┘ └─┬────┘ └┬─────┘ │
-│         └──────┼────────┘       │
-│                │                │
-│  ┌─────────────▼────────────┐   │
-│  │        rag_node          │◄──┤ Tool 2: semantic_search (Groq + Chroma)
-│  │                          │   │ Tool 4: generate_grounded_answer (Gemini)
-│  └─────────────┬────────────┘   │
-│                │                │
-│  ┌─────────────▼────────────┐   │
-│  │      validate_node       │◄──┤ Tool 5: validate_answer (Gemini)
-│  └─────────────┬────────────┘   │
-│                │                │
-│           [END | retry]         │
-└─────────────────────────────────┘
-                │
-┌───────────────▼─────────────────┐
-│   ChromaDB (persistente local)  │
-│  sentence-transformers embeds   │
-│  paraphrase-multilingual-MiniLM │
-└─────────────────────────────────┘
-```
+![Visión de componentes](examples/arquitectura.png)
+
+*Figura 1. Diseño de los componentes del sistema. Se ilustran los módulos principales (interfaz, API, agente y base vectorial), los nodos propuestos dentro del grafo de LangGraph, el flujo de enrutamiento según la intención del usuario y la evolución del estado compartido (`GraphState`) en cada transición.*
+
 
 ### 2.2 Pila tecnológica
 
@@ -331,32 +294,8 @@ La siguiente imagen muestra el diseño inicial (versión 2) del grafo LangGraph,
 
 ### 5.2 Flujo de ejecución
 
-```
-START
-  └─► classifier_node  [Tool 1: classify_intent]
-        ├─► domain_search_node ──┐
-        ├─► summarize_node ──────┤
-        ├─► compare_node ────────┤
-        │                        ▼
-        │                    rag_node  [Tool 2: semantic_search + Tool 4: generate_grounded_answer]
-        │                        │
-        │                        │
-        └─► general_search_node  │
-                    │            │
-                    └────────────┘
-                                 ▼
-                          validate_node  [Tool 5: validate_answer]
-                                 │
-                    ┌────────────┴────────────────┐
-                    │                             │
-              is_valid=True               is_valid=False & retries<1
-                    │                             │
-                   END                       rag_node  (reintento)
-                                                  │
-                                           validate_node
-                                                  │
-                                                 END
-```
+![Flujo de ejecución del sistema](examples/flujo_ejecucion.png)
+*Figura 3. Flujo de ejecución del sistema.*
 
 ### 5.3 Estado del grafo (`GraphState`)
 
