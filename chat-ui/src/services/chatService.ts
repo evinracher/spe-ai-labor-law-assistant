@@ -1,17 +1,5 @@
 import { mockResponse } from "../mocks/mockService";
-interface Citation {
-  source: string;
-  page: number | null;
-  chunk_id: string | null;
-  snippet: string;
-}
-
-interface Trace {
-  intent: string | null;
-  top_k: number | null;
-  vector_db: string;
-  llm_provider: string;
-}
+import type { Citation, Trace, WorkflowTrace } from "../app/types";
 
 interface ChatResponse {
   ok: boolean;
@@ -19,6 +7,7 @@ interface ChatResponse {
   answer: string;
   citations: Citation[];
   trace: Trace;
+  workflow_trace?: WorkflowTrace;
 }
 
 interface ChatRequest {
@@ -33,7 +22,7 @@ export async function sendMessageRequest(
   question: string,
   conversationId?: string,
   maxCitations?: number
-): Promise<string> {
+): Promise<{ answer: string; citations?: Citation[]; trace?: Trace; workflow_trace?: WorkflowTrace }> {
   if (API_URL) {
     const body: ChatRequest = { question };
     if (conversationId) body.conversation_id = conversationId;
@@ -50,10 +39,15 @@ export async function sendMessageRequest(
     }
 
     const data: ChatResponse = await response.json();
-    return data.answer;
+    return {
+      answer: data.answer,
+      citations: data.citations,
+      trace: data.trace,
+      workflow_trace: data.workflow_trace
+    };
   }
   
-  return await mockResponse();
+  return { answer: await mockResponse() };
 }
 
 function generateUUID(): string {
