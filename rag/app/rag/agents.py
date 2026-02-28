@@ -59,6 +59,7 @@ from app.rag.tools import (
     # Tools registry
     TOOLS_DICT,
 )
+#
 
 if TYPE_CHECKING:
     from app.core.config import Settings
