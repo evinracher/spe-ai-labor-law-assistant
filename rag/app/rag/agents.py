@@ -1,31 +1,63 @@
+"""
+ReAct-based Agents for SPE AI Labor Law Assistant
+==================================================
+
+This module implements a multi-node RAG system where each specialized node
+uses the ReAct pattern via create_agent: the LLM DECIDES which tools to use 
+based on the question, rather than using hardcoded regex patterns.
+
+Architecture:
+- classifier_node: Deterministic (no tools)
+- domain_search_node: ReAct with search tools (list_laws, search_law, get_article, jurisprudence)
+- summarize_node: ReAct with content tools (list_laws, get_article, metadata)
+- compare_node: ReAct with comparison tools (list_laws, search_law, get_article)
+- rag_node: Final generation with retrieved context
+- validate_node: ReAct for citation verification (verify_citation, check_vigency)
+- general_search_node: No RAG (Groq direct)
+
+Principle: Least Privilege - each node only has access to the tools it needs.
+"""
 from __future__ import annotations
 
 import os
+import re
+import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph, add_messages
+from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
 
-from app.api.schemas import ChatResponse, Trace, ToolTraceStep, WorkflowTrace
+from app.api.schemas import ChatResponse, Trace, Citation
 from app.core.config import settings
-from app.rag.prompts import CLASSIFIER_PROMPT, GENERAL_SYSTEM_PROMPT
+from app.rag.prompts import (
+    CLASSIFIER_PROMPT,
+    GENERAL_SYSTEM_PROMPT,
+    DOMAIN_SEARCH_PROMPT,
+    SUMMARIZE_PROMPT,
+    COMPARE_PROMPT,
+    VALIDATE_PROMPT,
+)
 from app.rag.retriever import recuperar_contexto_dinamico, formatear_documentos_para_gemini
-from app.api.schemas import Citation
-# Import formal Tools
 from app.rag.tools import (
-    classify_intent,
-    semantic_search,
-    read_document,
-    generate_grounded_answer,
-    validate_answer
+    # Data Access Tools
+    search_by_law_number,
+    get_article_text,
+    list_laws_by_topic,
+    get_document_metadata,
+    find_related_jurisprudence,
+    # Validation Tools
+    verify_citation_exists,
+    check_law_vigency,
+    # Tools registry
+    TOOLS_DICT,
 )
 
 if TYPE_CHECKING:
@@ -34,12 +66,121 @@ if TYPE_CHECKING:
 _RED = "\033[91m"
 _RESET = "\033[0m"
 
+
+def _build_conversation_history(messages: Sequence[BaseMessage], max_turns: int = 5) -> str:
+    """Construye un resumen del historial de conversación para pasar a los agentes."""
+    if len(messages) <= 1:
+        return ""
+    
+    # Tomar los últimos N turnos (excluyendo el mensaje actual)
+    history_messages = list(messages)[:-1][-max_turns * 2:]  # *2 porque cada turno tiene user+assistant
+    
+    if not history_messages:
+        return ""
+    
+    history_lines = []
+    for msg in history_messages:
+        role = "Usuario" if isinstance(msg, HumanMessage) else "Asistente"
+        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+        # Truncar mensajes largos
+        if len(content) > 300:
+            content = content[:300] + "..."
+        history_lines.append(f"{role}: {content}")
+    
+    return "HISTORIAL DE CONVERSACIÓN:\n" + "\n".join(history_lines) + "\n\n"
+
 # Ruta absoluta al directorio del proyecto (rag/)
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _DB_CHROMA_PATH = os.path.join(_PROJECT_ROOT, "db_chroma")
 
-# Note: LLM instances are now managed in tools.py to avoid duplication
-# They are imported and used through the Tools interface
+groq_LLM = ChatGroq(
+    model="llama-3.1-8b-instant",
+    temperature=0.2,
+    api_key=settings.GROQ_API_KEY,
+)
+print("✅ groq_LLM ready:", groq_LLM.model_name)
+
+# Conexión Global a tu Base Vectorial - Google embedding-001
+embeddings = GoogleGenerativeAIEmbeddings(
+    model="models/gemini-embedding-001",
+    task_type="RETRIEVAL_DOCUMENT",
+    google_api_key=settings.GOOGLE_API_KEY
+)
+vectorstore = Chroma(persist_directory=_DB_CHROMA_PATH, embedding_function=embeddings)
+
+# Instanciamos a Gemini para Clasificación y Generación Final
+gemini_LLM = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash", # Modelo actualizado
+    temperature=0.1, #Al bajar un poco la temperatura la respuesta sera mas "natural", sin embargo se puede setear en 0 si queremos respuestas mas "tecnicas" y ceñidas al contexto
+    google_api_key=settings.GOOGLE_API_KEY
+    )
+print("✅ gemini_LLM ready:", gemini_LLM.model)
+
+# ====================================================================
+# Tool Sets per Node (Principle: Least Privilege)
+# ====================================================================
+
+DOMAIN_SEARCH_TOOLS = [
+    list_laws_by_topic,
+    search_by_law_number,
+    get_article_text,
+    find_related_jurisprudence,
+]
+
+SUMMARIZE_TOOLS = [
+    list_laws_by_topic,
+    get_article_text,
+    get_document_metadata,
+]
+
+COMPARE_TOOLS = [
+    list_laws_by_topic,
+    search_by_law_number,
+    get_article_text,
+]
+
+VALIDATE_TOOLS = [
+    verify_citation_exists,
+    check_law_vigency,
+]
+
+# ====================================================================
+# ReAct Agents per Node (using create_agent)
+# ====================================================================
+
+# Agente para búsqueda en dominio legal
+domain_search_agent = create_agent(
+    model=gemini_LLM,
+    tools=DOMAIN_SEARCH_TOOLS,
+    system_prompt=DOMAIN_SEARCH_PROMPT,
+    name="domain_search_agent"
+)
+
+# Agente para resúmenes
+summarize_agent = create_agent(
+    model=gemini_LLM,
+    tools=SUMMARIZE_TOOLS,
+    system_prompt=SUMMARIZE_PROMPT,
+    name="summarize_agent"
+)
+
+# Agente para comparaciones
+compare_agent = create_agent(
+    model=gemini_LLM,
+    tools=COMPARE_TOOLS,
+    system_prompt=COMPARE_PROMPT,
+    name="compare_agent"
+)
+
+# Agente para validación
+validate_agent = create_agent(
+    model=gemini_LLM,
+    tools=VALIDATE_TOOLS,
+    system_prompt=VALIDATE_PROMPT,
+    name="validate_agent"
+)
+
+print("✅ ReAct agents created: domain_search, summarize, compare, validate")
 
 
 class ClassifierOutput(BaseModel):
@@ -53,466 +194,353 @@ class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     question: str
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch"]
-    # Retrieved context from semantic_search tool
-    contexto_legal: str
-    # Documents with metadata for citations
-    documentos_recuperados: list
-    # Tool execution traces for debugging
-    tool_traces: dict
-    # Validation result from validate_answer tool
-    validation_result: dict
-    # Whether final answer is valid
+    instruccion_especifica: str  # Instrucción específica del nodo de intención
+    contexto_legal: str  # Contexto recuperado de la base vectorial
+    laws_hint: str  # Leyes detectadas por list_laws_by_topic (opcional)
     is_valid: bool
+    documentos_recuperados: list  # Documentos para citaciones
 
 
-# Note: classifier_chain is now handled internally by Tool 1 (classify_intent)
-# from app/rag/tools.py, which uses Gemini for intent classification
+#Usamos gemini para la clasificación de intención porque es más fuerte en tareas de comprensión y clasificación, mientras que groq lo dejamos para manejo de la lógica del grafo.
+classifier_chain = CLASSIFIER_PROMPT | gemini_LLM.with_structured_output(ClassifierOutput)
 
 
 def classifier_node(state: GraphState):
-    """
-    Node 1: CLASSIFY INTENT (using Tool 1: classify_intent)
-    
-    Routes user query to appropriate handler.
-    Uses formal Tool: classify_intent()
-    """
-    from datetime import datetime
-    
     question = state["messages"][-1].content
-    
-    # Call Tool 1: classify_intent (use .invoke() for LangChain Tool)
-    classification_result = classify_intent.invoke({"question": question})
-    
-    tool_trace = {
-        "tool_name": "classify_intent",
-        "input": {"question": question[:100]},
-        "output": classification_result,
-        "timestamp": datetime.now().isoformat()
-    }
-    
-    return {
-        "question": classification_result["question"],
-        "intent": classification_result["intent"],
-        "tool_traces": {**state.get("tool_traces", {}), "classify_intent": tool_trace}
-    }
+    classification_result = classifier_chain.invoke({"question": question})
+    return {"question": classification_result.question, "intent": classification_result.intent}
 
 
 def general_search_node(state: GraphState):
     """
-    Node 2: GENERAL SEARCH (No RAG)
-    
-    For general queries that don't require legal corpus search.
-    Skips semantic_search and generate_grounded_answer tools.
+    Respuestas generales usando Groq.
     """
     messages_for_llm = [GENERAL_SYSTEM_PROMPT] + state["messages"]
-    from app.rag.tools import gemini_LLM
-    res = gemini_LLM.invoke(messages_for_llm)
-    print(f"{_RED}[GRAPH] general_search_node - Response ready{_RESET}")
+    res = groq_LLM.invoke(messages_for_llm)
+    print(f"{_RED}[DEBUG]: general_search_node (Groq) - Response ready{_RESET}")
     return {"messages": [res]}
 
 
 def domain_search_node(state: GraphState):
     """
-    Node 3: DOMAIN SEARCH (RAG Path)
-    
-    Prepares instruction for legal domain queries.
-    Next: semantic_search tool will be called in rag_node.
+    Nodo ReAct para búsqueda de información específica en el dominio legal.
     """
-    print(f"{_RED}[GRAPH] domain_search_node - Preparing RAG workflow{_RESET}")
+    print(f"{_RED}[DEBUG]: domain_search_node (ReAct con contexto){_RESET}")
     question = state["question"]
-
-    # This instruction will guide generate_grounded_answer tool
-    instruction = (
-        "Act as an expert in Colombian labor law. Read the retrieved legal context, "
-        "and answer the user's question directly, precisely, and grounded strictly in the provided law.\n\n"
-        f"The user's question is: '{question}'.\n\n"
-        "Make sure to cite the relevant articles, laws, or decrees using the provided metadata.\n\n"
-        "IMPORTANT: Your final response MUST be written entirely in Spanish."
+    contexto_previo = state.get("contexto_legal", "")
+    historial = _build_conversation_history(state["messages"])
+    
+    # Prompt que incluye el contexto vectorial y el historial
+    prompt_con_contexto = (
+        f"{historial}"
+        f"CONTEXTO LEGAL DISPONIBLE (de la base de datos vectorial):\n"
+        f"{contexto_previo}\n\n"
+        f"PREGUNTA DEL USUARIO: {question}\n\n"
+        f"INSTRUCCIONES:\n"
+        f"1. Si el contexto proporcionado es SUFICIENTE para responder, genera la respuesta directamente\n"
+        f"2. Si necesitas información MÁS ESPECÍFICA (ley exacta, artículo, jurisprudencia), usa las herramientas\n"
+        f"3. Cita las fuentes exactas (Ley X, Artículo Y)\n"
+        f"4. Responde SIEMPRE en español"
     )
-
-    return {"intent": "domainSearch"}
+    
+    # Invocar el agente ReAct - él decide si usa tools o responde directo
+    result = domain_search_agent.invoke({
+        "messages": [{"role": "user", "content": prompt_con_contexto}]
+    })
+    
+    # Extraer la respuesta final
+    final_message = result["messages"][-1]
+    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
+    
+    # Log de tools usadas
+    tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+    if tool_calls:
+        print(f"{_RED}[DEBUG]: domain_search_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}")
+    else:
+        print(f"{_RED}[DEBUG]: domain_search_node - Contexto suficiente (sin tools){_RESET}")
+    
+    return {
+        "messages": [AIMessage(content=agent_response)]
+    }
 
 
 def summarize_node(state: GraphState):
     """
-    Node 4: SUMMARIZE (RAG Path)
-    
-    Prepares instruction for summarization tasks.
-    Will use semantic_search and generate_grounded_answer tools.
+    Nodo ReAct para generar resúmenes de temas legales.
     """
-    print(f"{_RED}[GRAPH] summarize_node - Preparing summarization workflow{_RESET}")
+    print(f"{_RED}[DEBUG]: summarize_node (ReAct con contexto){_RESET}")
     question = state["question"]
-
-    instruction = (
-        "Act as a legal analyst. Using the retrieved legal context, generate a clear, "
-        "structured, and easy-to-understand summary of the consulted topic. "
-        "Use bullet points if necessary for better readability.\n\n"
-        f"The user's consulted topic is: '{question}'.\n\n"
-        "IMPORTANT: Your final response MUST be written entirely in Spanish."
+    contexto_previo = state.get("contexto_legal", "")
+    historial = _build_conversation_history(state["messages"])
+    
+    prompt_con_contexto = (
+        f"{historial}"
+        f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
+        f"SOLICITUD: {question}\n\n"
+        f"Genera un resumen estructurado. Si el contexto es suficiente, úsalo directamente. "
+        f"Si necesitas más detalle de artículos específicos, usa las herramientas."
     )
-
-    return {"intent": "summarize"}
+    
+    result = summarize_agent.invoke({
+        "messages": [{"role": "user", "content": prompt_con_contexto}]
+    })
+    
+    final_message = result["messages"][-1]
+    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
+    
+    tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+    if tool_calls:
+        print(f"{_RED}[DEBUG]: summarize_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}")
+    else:
+        print(f"{_RED}[DEBUG]: summarize_node - Contexto suficiente (sin tools){_RESET}")
+    
+    return {
+        "messages": [AIMessage(content=agent_response)]
+    }
 
 
 def compare_node(state: GraphState):
     """
-    Node 5: COMPARE (RAG Path)
-    
-    Prepares instruction for legal concept comparison.
-    Will use semantic_search and generate_grounded_answer tools.
+    Nodo ReAct para comparar conceptos legales.
     """
-    print(f"{_RED}[GRAPH] compare_node - Preparing comparison workflow{_RESET}")
+    print(f"{_RED}[DEBUG]: compare_node (ReAct con contexto){_RESET}")
     question = state["question"]
-
-    instruction = (
-        "Act as an expert in Colombian labor law. Based on the retrieved context, "
-        "compare the legal concepts requested by the user in a structured way. "
-        "Organize your response strictly into these three sections:\n"
-        "1. Definición de los conceptos (Definition of the concepts)\n"
-        "2. Diferencias clave (Key differences)\n"
-        "3. Implicaciones legales (Legal implications for the employee/employer)\n\n"
-        f"The information to compare is: '{question}'.\n\n"
-        "IMPORTANT: Your final response MUST be written entirely in Spanish."
+    contexto_previo = state.get("contexto_legal", "")
+    historial = _build_conversation_history(state["messages"])
+    
+    prompt_con_contexto = (
+        f"{historial}"
+        f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
+        f"SOLICITUD DE COMPARACIÓN: {question}\n\n"
+        f"Compara los conceptos solicitados. Si el contexto tiene la información, úsalo. "
+        f"Si necesitas artículos específicos de cada concepto, usa las herramientas."
     )
-
-    return {"intent": "compare"}
+    
+    result = compare_agent.invoke({
+        "messages": [{"role": "user", "content": prompt_con_contexto}]
+    })
+    
+    final_message = result["messages"][-1]
+    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
+    
+    tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+    if tool_calls:
+        print(f"{_RED}[DEBUG]: compare_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}")
+    else:
+        print(f"{_RED}[DEBUG]: compare_node - Contexto suficiente (sin tools){_RESET}")
+    
+    return {
+        "messages": [AIMessage(content=agent_response)]
+    }
 
 
 def rag_node(state: GraphState):
     """
-    Node 6: RAG ORCHESTRATION (Core Tools 2-4 Execution)
-    
-    Orchestrates the RAG pipeline:
-    1. Tool 2: semantic_search() - Retrieves documents from Chroma
-    2. Tool 4: generate_grounded_answer() - Generates answer with citations
-    
-    Workflow:
-    - Calls semantic_search to retrieve relevant documents
-    - Formats context for Gemini
-    - Calls generate_grounded_answer for final response with citations
-    
-    Returns:
-    - messages: LLM response
-    - contexto_legal: Formatted context (for validation)
-    - documentos_recuperados: Citations list (for frontend)
+    Nodo RAG de SOLO RETRIEVAL (no genera).
     """
-    
-    print(f"{_RED}[GRAPH] rag_node - Executing RAG pipeline...{_RESET}")
+    print(f"{_RED}[DEBUG]: rag_node - Solo retrieval (no genera){_RESET}")
     question = state["question"]
-    intent = state["intent"]
     
-    # ===== TOOL 2: semantic_search =====
-    print(f"{_RED}[GRAPH] Calling Tool 2: semantic_search{_RESET}")
-    search_result = semantic_search.invoke({"query": question})
+    # Búsqueda vectorial
+    documentos = recuperar_contexto_dinamico(question, vectorstore)
+    contexto_vectorial = formatear_documentos_para_gemini(documentos)
     
-    if search_result.get("total_results", 0) == 0:
-        print(f"{_RED}[GRAPH] No documents retrieved, fallback to general response{_RESET}")
-        from app.rag.tools import gemini_LLM
-        res = gemini_LLM.invoke(
-            f"Answer this question in Spanish: {question}\n"
-            "Note: No relevant legal documents were found in the corpus."
+    print(f"{_RED}[DEBUG]: rag_node - Recuperados {len(documentos)} documentos{_RESET}")
+    
+    # Extraer citaciones para el response final
+    citations_list = []
+    for doc in documentos:
+        cita = Citation(
+            source=doc.metadata.get("doc_id", "Desconocido"),
+            page=doc.metadata.get("page", None),
+            chunk_id=doc.metadata.get("chunk_id", "N/A"),
+            snippet=doc.page_content[:250] + "..."
         )
-        return {
-            "messages": [res],
-            "contexto_legal": "No documents found",
-            "documentos_recuperados": [],
-            "is_valid": True,
-            "tool_traces": {
-                **state.get("tool_traces", {}),
-                "semantic_search": {"result": search_result}
-            }
-        }
-    
-    # Extract documents with metadata
-    raw_documents = search_result.get("documents", [])
-    contexto = formatear_documentos_para_gemini([
-        type('Doc', (), {
-            'page_content': doc['content'],
-            'metadata': doc['metadata']
-        })() 
-        for doc in raw_documents
-    ])
-    
-    # ===== TOOL 4: generate_grounded_answer =====
-    print(f"{_RED}[GRAPH] Calling Tool 4: generate_grounded_answer{_RESET}")
-    answer_result = generate_grounded_answer.invoke({
-        "question": question,
-        "context": contexto,
-        "intent": intent,
-        "documents": raw_documents
-    })
-    
-    from langchain_core.messages import AIMessage
-    response_message = AIMessage(content=answer_result["answer"])
-    
-    # Build citations
-    citations_list = [
-        Citation(
-            source=cit.get("source", "Unknown"),
-            page=cit.get("page"),
-            chunk_id=cit.get("chunk_id", "N/A"),
-            snippet=cit.get("snippet", "")
-        )
-        for cit in answer_result.get("citations", [])
-    ]
-    
-    tool_traces = state.get("tool_traces", {})
-    tool_traces.update({
-        "semantic_search": {
-            "query": question,
-            "results": search_result["total_results"],
-            "top_k_used": search_result.get("top_k_used"),
-            "timestamp": __import__("datetime").datetime.now().isoformat()
-        },
-        "generate_grounded_answer": {
-            "citations": len(citations_list),
-            "intent_used": intent,
-            "tokens_used": answer_result.get("tokens_used", 0),
-            "timestamp": __import__("datetime").datetime.now().isoformat()
-        }
-    })
-    
+        citations_list.append(cita)
+
+    # Solo guarda contexto, NO genera respuesta
     return {
-        "messages": [response_message],
-        "contexto_legal": contexto,
-        "documentos_recuperados": citations_list,
-        "tool_traces": tool_traces
+        "contexto_legal": contexto_vectorial,
+        "documentos_recuperados": citations_list
     }
 
 
 
 def validate_node(state: GraphState):
     """
-    Node 7: VALIDATE ANSWER (Tool 5: validate_answer)
-    
-    Quality assessment before returning to user.
-    Uses Tool 5: validate_answer() to detect:
-    - Coherence issues
-    - Hallucinations
-    - Grounding problems
-    - Completeness
-    
-    If validation fails, triggers rag_node retry.
+    Nodo ReAct de validación que decide autónomamente:
+    - Qué citaciones verificar con verify_citation_exists
+    - Qué leyes revisar con check_law_vigency
+    - Si la respuesta es válida o necesita corrección
     """
-    answer = state["messages"][-1].content
-    context = state.get("contexto_legal", "")
-    question = state["question"]
+    answer_content = state["messages"][-1].content
+    # Asegurar que answer sea string
+    answer = str(answer_content) if not isinstance(answer_content, str) else answer_content
+    intent = state.get("intent", "generalSearch")
+    print(f"{_RED}[DEBUG]: validate_node (ReAct) - intent={intent}{_RESET}")
     
-    print(f"{_RED}[GRAPH] validate_node - Assessing answer quality (Tool 5)...{_RESET}")
+    # Validación básica primero (criterios que no necesitan tools)
+    has_content = len(answer.strip()) > 50
+    uncertainty_phrases = [
+        "no sé", "no tengo información", "no puedo responder",
+        "no encontré", "fuera de mi conocimiento", "no dispongo"
+    ]
+    not_uncertain = not any(phrase in answer.lower() for phrase in uncertainty_phrases)
     
-    # ===== TOOL 5: validate_answer =====
-    validation_result = validate_answer.invoke({
-        "question": question,
-        "answer": answer,
-        "context": context
-    })
+    # Para intents legales, usar el agente ReAct para validación profunda
+    if intent in ["domainSearch", "summarize", "compare"]:
+        # Construir prompt para el agente validador
+        validation_request = (
+            f"Valida la siguiente respuesta legal:\n\n"
+            f"RESPUESTA A VALIDAR:\n{answer}\n\n"
+            f"Por favor:\n"
+            f"1. Identifica las citaciones legales mencionadas (artículos, leyes, decretos)\n"
+            f"2. Verifica si existen las citaciones principales usando verify_citation_exists\n"
+            f"3. Verifica si las leyes mencionadas están vigentes usando check_law_vigency\n"
+            f"4. Indica si la respuesta es VÁLIDA o NO VÁLIDA y por qué"
+        )
+        
+        try:
+            result = validate_agent.invoke({
+                "messages": [{"role": "user", "content": validation_request}]
+            })
+            
+            final_message = result["messages"][-1]
+            validation_result = final_message.content if hasattr(final_message, 'content') else str(final_message)
+            
+            # Log de tools usadas
+            tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+            if tool_calls:
+                print(f"{_RED}[DEBUG]: validate_node - Validaciones ejecutadas: {len(tool_calls)} tools{_RESET}")
+            
+            # Determinar validez basado en respuesta del agente
+            validation_lower = validation_result.lower()
+            is_valid_from_agent = (
+                "válida" in validation_lower and 
+                "no válida" not in validation_lower and
+                "inválida" not in validation_lower
+            )
+            
+            print(f"{_RED}[DEBUG]: validate_node - Resultado agente: {'VÁLIDA' if is_valid_from_agent else 'NO VÁLIDA'}{_RESET}")
+            
+            # Combinar criterios básicos con validación del agente
+            is_valid = has_content and not_uncertain and is_valid_from_agent
+            
+        except Exception as e:
+            print(f"{_RED}[DEBUG]: validate_node - Error en agente: {e}{_RESET}")
+            # Fallback a validación básica
+            legal_terms = ["artículo", "ley", "decreto", "código", "art.", "numeral"]
+            has_legal_reference = any(term in answer.lower() for term in legal_terms)
+            is_valid = has_content and not_uncertain and has_legal_reference
+    else:
+        # Para generalSearch, validación básica
+        is_valid = has_content and not_uncertain
     
-    is_valid = validation_result.get("is_valid", False)
+    print(f"{_RED}[DEBUG]: validate_node - valid={is_valid} "
+            f"(content={has_content}, certain={not_uncertain}){_RESET}")
     
-    print(f"{_RED}[GRAPH] validate_node - Valid: {is_valid}, "
-          f"Hallucination: {validation_result.get('hallucination_detected', False)}{_RESET}")
-    
-    tool_traces = state.get("tool_traces", {})
-    tool_traces["validate_answer"] = {
-        **validation_result,
-        "timestamp": __import__("datetime").datetime.now().isoformat()
-    }
-    
-    return {
-        "is_valid": is_valid,
-        "validation_result": validation_result,
-        "tool_traces": tool_traces
-    }
+    return {"is_valid": is_valid}
 
 
 def validate_route(state: GraphState) -> Literal["rag_node", "__end__"]:
-    """
-    Router: Decision based on validation result.
-    
-    If validation passes: Go to END
-    If validation fails: Retry RAG node for refinement (max 1 retry)
-    """
     if state["is_valid"]:
-        print(f"{_RED}[GRAPH] validate_route - Answer is VALID, ending{_RESET}")
-        return END
+        print(f"{_RED}[DEBUG]: validate_node — answer is valid{_RESET}")
+        return END  # Ir directamente al final, saltando el nodo de integración
 
-    # Prevent infinite loops: check if already retried
-    retry_count = state.get("tool_traces", {}).get("rag_node_retry_count", 0)
-    if retry_count >= 1:
-        print(f"{_RED}[GRAPH] validate_route - Max retries reached, ending{_RESET}")
-        return END
-    
-    print(f"{_RED}[GRAPH] validate_route - Invalid answer, retrying RAG node{_RESET}")
+    print(f"{_RED}[DEBUG]: validate_node — answer is NOT valid, will retry with RAG node{_RESET}")
     return "rag_node"
-
-#Se comenta el nodo de integración porque en esta arquitectura el nodo RAG ya devuelve la respuesta final redactada por Gemini, por lo que no es necesario un nodo adicional para integrar la información. Además, al pasar los documentos recuperados y el contexto legal directamente en el estado, el nodo de validación puede usarlos para tomar decisiones más informadas sobre la validez de la respuesta.
-#def integrate_node(state: GraphState):
-#    answer = state["messages"][-1].content
-#    print(f"{_RED}[DEBUG]: integrate_node{_RESET}")
-#    return {
-#        "answer": answer,
-#        "question": state["question"],
-#        "intent": state["intent"],
-#        "citations": [],
-#    }
-
 
 def classify_route(
     state: GraphState,
-) -> Literal["domain_search_node", "summarize_node", "compare_node", "general_search_node"]:
-    """
-    Router: Route based on classified intent.
-    
-    Intent → Handler mapping:
-    - domainSearch → domain_search_node → rag_node (RAG pipeline)
-    - summarize → summarize_node → rag_node (RAG pipeline)
-    - compare → compare_node → rag_node (RAG pipeline)
-    - generalSearch → general_search_node (Direct LLM, no RAG)
-    """
+) -> Literal["rag_node", "general_search_node"]:
+    """Ruta después del classifier: RAG para intents legales, directo para general."""
     intent = state["intent"]
-    print(f"{_RED}[GRAPH] classify_route - Routing intent: {intent}{_RESET}")
-    
+    if intent in ["domainSearch", "summarize", "compare"]:
+        return "rag_node"  # Primero retrieval
+    else:
+        return "general_search_node"  # No necesita RAG
+
+
+def rag_route(
+    state: GraphState,
+) -> Literal["domain_search_node", "summarize_node", "compare_node"]:
+    """Ruta después del rag_node: al nodo experto según intent."""
+    intent = state["intent"]
     if intent == "domainSearch":
         return "domain_search_node"
     elif intent == "summarize":
         return "summarize_node"
-    elif intent == "compare":
+    else:  # compare
         return "compare_node"
-    else:
-        return "general_search_node"
 
 
 graph = StateGraph(GraphState)
 
-# Nodes: classifier -> intent routers -> handlers
 graph.add_node("classifier_node", classifier_node)
 graph.add_node("domain_search_node", domain_search_node)
 graph.add_node("summarize_node", summarize_node)
 graph.add_node("compare_node", compare_node)
 graph.add_node("general_search_node", general_search_node)
-graph.add_node("rag_node", rag_node)
 graph.add_node("validate_node", validate_node)
+#graph.add_node("integrate_node", integrate_node)
+graph.add_node("rag_node", rag_node)
 
-# Edges: Main flow
 graph.add_edge(START, "classifier_node")
 graph.add_conditional_edges("classifier_node", classify_route)
 
-# RAG path: domain/summarize/compare → rag_node → validate
-graph.add_edge("domain_search_node", "rag_node")
-graph.add_edge("summarize_node", "rag_node")
-graph.add_edge("compare_node", "rag_node")
-
-# General path: no RAG validation
-graph.add_edge("general_search_node", "validate_node")
-
-# RAG path: rag_node → validate_node
-graph.add_edge("rag_node", "validate_node")
-
-# Validation: decide whether to retry or end
+# Flujo Opción C: classifier → rag_node (retrieval) → intent_node (genera) → validate
+graph.add_conditional_edges("rag_node", rag_route)  # rag_node → experto según intent
+graph.add_edge("domain_search_node", "validate_node")
+graph.add_edge("summarize_node", "validate_node")
+graph.add_edge("compare_node", "validate_node")
+graph.add_edge("general_search_node", "validate_node")  # No necesita RAG
 graph.add_conditional_edges("validate_node", validate_route)
 
 memory = InMemorySaver()
 chat = graph.compile(checkpointer=memory)
+"""""
+# ----------------------------------------
+# Generar diagrama Mermaid del grafo
+# ----------------------------------------
 
-print("\n" + "="*70)
-print("✅ LANGGRAPH COMPILED SUCCESSFULLY")
-print("="*70)
-print("Graph Structure:")
-print("  START → classifier_node")
-print("    ├→ domain_search_node → rag_node → validate_node")
-print("    ├→ summarize_node → rag_node → validate_node")
-print("    ├→ compare_node → rag_node → validate_node")
-print("    └→ general_search_node → validate_node")
-print("  validate_node → [END | rag_node retry]")
-print("="*70 + "\n")
-
+if __name__ == "__main__":
+    mermaid_code = chat.get_graph().draw_mermaid()
+    print("\n====== MERMAID GRAPH ======\n")
+    print(mermaid_code)
+"""
 
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
-    """
-    Main entry point for chat interactions.
-    
-    Executes the complete RAG workflow using the 5 formal Tools:
-    
-    1. Tool 1 (classify_intent): Classify user intent
-    2. Tool 2 (semantic_search): Retrieve relevant documents
-    3. Tool 4 (generate_grounded_answer): Generate answer with citations
-    4. Tool 5 (validate_answer): Assess answer quality
-    
-    Plus conditional retry logic through LangGraph routing.
-    
-    Returns:
-        ChatResponse with answer, citations, trace, and full metadata
-    """
-    import time
-    start_time = time.time()
-    
+    if conversation_id is None:
+        conversation_id = "conversation_1"
+        
     config = {"configurable": {"thread_id": conversation_id}}
-    
-    # Initial state
-    initial_messages = {
-        "messages": [HumanMessage(content=question)],
-        "question": question,
-        "tool_traces": {}
-    }
-    
-    print(f"\n{_RED}{'='*70}{_RESET}")
-    print(f"{_RED}[CHAT] Starting workflow for: {question[:60]}...{_RESET}")
-    print(f"{_RED}{'='*70}{_RESET}\n")
-    
-    # Execute graph
+    # Inyectamos la pregunta en el estado inicial
+    initial_messages = {"messages": [HumanMessage(content=question)], "question": question}
+    #Ejecutamos el grafo y capturamos TODO el estado final
     state_output = chat.invoke(initial_messages, config=config)
-    
-    # Extract results
-    response = state_output["messages"][-1].content
-    intent_real = state_output.get("intent", "generalSearch")
-    citations_list = state_output.get("documentos_recuperados", [])
-    tool_traces_raw = state_output.get("tool_traces", {})
-    validation_result = state_output.get("validation_result", {})
-    
-    # Build request ID
-    request_id = f"req-{conversation_id}"
-    
-    # Build structured workflow trace from raw tool traces
-    tools_used = list(tool_traces_raw.keys())
-    trace_steps = []
-    
-    for tool_name, trace_data in tool_traces_raw.items():
-        step = ToolTraceStep(
-            tool_name=tool_name,
-            status="success" if not trace_data.get("error") else "failure",
-            input=trace_data.get("input", {}),
-            output=trace_data.get("output", {}),
-            error=trace_data.get("error"),
-            timestamp=trace_data.get("timestamp")
+    # Extraemos la respuesta del LLM (puede venir como string o lista de content blocks)
+    raw_content = state_output["messages"][-1].content
+    if isinstance(raw_content, list):
+        # Gemini a veces devuelve lista de bloques: [{'type': 'text', 'text': '...'}]
+        response = "".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in raw_content
         )
-        trace_steps.append(step)
-    
-    # Build workflow trace
-    workflow_trace = WorkflowTrace(
-        conversation_id=conversation_id,
-        total_steps=len(trace_steps),
-        tools_used=tools_used,
-        tool_traces=trace_steps,
-        validation_passed=validation_result.get("is_valid", False),
-        validation_details={
-            "coherence_score": validation_result.get("coherence_score", 0),
-            "grounding_score": validation_result.get("grounding_score", 0),
-            "hallucination_detected": validation_result.get("hallucination_detected", False),
-            "completeness_score": validation_result.get("completeness_score", 0),
-            "reason": validation_result.get("reason", "")
-        },
-        execution_time_ms=round((time.time() - start_time) * 1000, 2)
-    )
-    
-    print(f"\n{_RED}{'='*70}{_RESET}")
-    print(f"{_RED}[CHAT] Workflow complete{_RESET}")
-    print(f"{_RED}  Intent: {intent_real}{_RESET}")
-    print(f"{_RED}  Tools Used: {', '.join(tools_used)}{_RESET}")
-    print(f"{_RED}  Citations: {len(citations_list)}{_RESET}")
-    print(f"{_RED}  Valid: {validation_result.get('is_valid', False)}{_RESET}")
-    print(f"{_RED}  Time: {workflow_trace.execution_time_ms}ms{_RESET}")
-    print(f"{_RED}{'='*70}{_RESET}\n")
-    
+    else:
+        response = raw_content
+    # Extraemos el intent real que calculó el clasificador
+    intent_real = state_output.get("intent", "generalSearch")
+    # Extraemos los documentos y los convertimos al esquema Citation de FastAPI
+    documentos_recuperados = state_output.get("documentos", [])
+
+    # Para generalSearch no devolvemos citaciones (no usa RAG)
+    if intent_real == "generalSearch":
+        citations_list = []
+    else:
+        #Obtenemos la lista de documentos recuperados por el nodo RAG para incluirlos en las citaciones
+        citations_list = state_output.get("documentos_recuperados", [])
+    request_id = f"req-{uuid.uuid4().hex[:8]}-{conversation_id}"
+
     return ChatResponse(
         ok=True,
         request_id=request_id,
@@ -524,11 +552,4 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
             vector_db=settings.VECTOR_DB,
             llm_provider=settings.LLM_PROVIDER,
         ),
-        workflow_trace=workflow_trace,
-        # Additional metadata for backward compatibility
-        metadata={
-            "tool_traces": tool_traces_raw,
-            "validation_score": validation_result.get("grounding_score", 0),
-            "hallucination_detected": validation_result.get("hallucination_detected", False)
-        }
     )

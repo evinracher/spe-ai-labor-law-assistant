@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
 
 # Obtener la ruta raíz del proyecto (rag/)
@@ -27,7 +27,10 @@ def formatear_documentos_para_gemini(documentos_recuperados) -> str:
 
 def simular_flujo_rag():
     print("🔌 Conectando a la base de datos ChromaDB...")
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="embedding-001",
+        google_api_key=os.getenv("GOOGLE_API_KEY")
+    )
     db_path = os.path.join(PROJECT_ROOT, "db_chroma")
     vectorstore = Chroma(persist_directory=db_path, embedding_function=embeddings)
     

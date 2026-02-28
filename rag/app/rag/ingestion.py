@@ -1,7 +1,6 @@
 import os
-# from langchain_google_genai import GoogleGenerativeAIEmbeddings  # Comentado - no se usa actualmente
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma # Usamos el paquete actualizado de Chroma
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import re
@@ -10,13 +9,39 @@ def limpiar_texto(texto: str) -> str:
     """Limpia el texto extraído del PDF eliminando ruido común."""
     if not texto:
         return ""
-    # 1. Reemplazar múltiples saltos de línea por uno solo
+    
+    # 1. Eliminar ruido típico de la web de SUIN-Juriscol
+    ruido_suin = [
+        r'\[Mostrar\]',
+        r'Responder Encuesta',
+        r'Descargar en Word',
+        r'Compartir este documento',
+        r'Lectura de voz',
+        r'Ayúdanos a mejorar',
+        r'Ir al portal SUIN-Juriscol',
+        r'Sistema Único de Información Normativa',
+        r'Guardar en PDF o imprimir la norma',
+        r'Inscripciones abiertas'
+    ]
+    for patron in ruido_suin:
+        texto = re.sub(patron, '', texto, flags=re.IGNORECASE)
+        
+    # 2. Eliminar fechas de impresión web (ej: 23/2/26, 9:10 p.m.)
+    texto = re.sub(r'\d{1,2}/\d{1,2}/\d{2,4},\s\d{1,2}:\d{2}\s[a-p]\.m\.', '', texto)
+    
+    # 3. Eliminar URLs
+    texto = re.sub(r'https?://\S+', '', texto)
+    # 4. ELIMINAR CARACTERES RAROS / ICONOS DE TEXTO
+    # Solo permitimos: Letras (incluyendo acentos y ñ), números, espacios y puntuación básica
+    texto = re.sub(r'[^\w\s.,;:!?()"\-áéíóúÁÉÍÓÚñÑüÜ¿¡]', '', texto)
+    
+    # 5. Reemplazar múltiples saltos de línea por uno solo
     texto = re.sub(r'\n{3,}', '\n\n', texto)
-    # 2. Reemplazar múltiples espacios por un solo espacio
+    # 6. Reemplazar múltiples espacios por un solo espacio
     texto = re.sub(r' {2,}', ' ', texto)
-    # 3. Eliminar caracteres nulos extraños que a veces vienen en PDFs viejos
+    # 7. Eliminar caracteres nulos extraños que a veces vienen en PDFs viejos
     texto = texto.replace('\x00', '')
-    # 4. Quitar espacios en blanco al inicio y al final
+    # 8. Quitar espacios en blanco al inicio y al final
     return texto.strip()
 
 def procesar_pdf(ruta_archivo):
@@ -51,23 +76,30 @@ def procesar_pdf(ruta_archivo):
 
 # Asumimos que 'chunks' es la lista que retornó nuestra función anterior
 def crear_indice_vectorial(chunks):
-    # 1. Definir el modelo de embeddings de Google
-    # Nota: Requiere tener os.environ["GOOGLE_API_KEY"] configurado
-    #google_key = os.getenv("GOOGLE_API_KEY")
-    #embeddings = GoogleGenerativeAIEmbeddings(
-    #    model="models/embedding-001",
-    #    google_api_key=google_key
-    #)
+    """
+    Crea el índice vectorial usando Google text-embedding-004.
+    Este modelo es significativamente más potente que MiniLM-L12:
+    - 768 dimensiones vs 384
+    - Mejor comprensión semántica en español
+    - Mejor manejo de terminología legal
+    """
+    # Google embedding-001 - Modelo estable de Google
+    google_key = os.getenv("GOOGLE_API_KEY")
+    if not google_key:
+        raise ValueError("GOOGLE_API_KEY no está configurada en el entorno")
     
-    # Alternativamente, puedes usar un modelo de HuggingFace local (sin necesidad de API Key)
-    model = os.getenv("EMBEDDINGS_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-    embeddings = HuggingFaceEmbeddings(model_name=model)
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-001",
+        task_type="RETRIEVAL_DOCUMENT",
+        google_api_key=google_key
+    )
+    print("✅ Usando Google embedding-001 para embeddings")
     
-    # 2. Crear y persistir la base de datos Chroma localmente
+    # Crear y persistir la base de datos Chroma localmente
     vectorstore = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
-        persist_directory="./db_chroma" # Se guardará en la carpeta que definimos en la arquitectura
+        persist_directory="./db_chroma"
     )
     
     return vectorstore
