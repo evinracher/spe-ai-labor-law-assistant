@@ -160,7 +160,7 @@ Desarrollar un asistente inteligente que proporcione respuestas precisas y verif
 ```python
 class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]  # Historial
-    question: str                    # Pregunta actual
+    question: str                    ## Pregunta actual
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch"]
     contexto_legal: str              # Contexto recuperado de ChromaDB
     documentos_recuperados: list     # Citaciones para el response
