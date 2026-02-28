@@ -1,34 +1,34 @@
+# Labor Law Assistant - Chat UI
 
-  # Labor Law Assistant - Chat UI
-
-A modern React-based chat interface for the AI Labor Law Assistant. This application provides an intuitive user experience for interacting with the Colombian labor law chatbot, supporting both specialized labor law queries and general questions.
+A React-based chat interface for the AI Labor Law Assistant. Provides an intuitive experience for interacting with the Colombian labor law chatbot, with full traceability of retrieved legal sources and agent execution steps.
 
 ## 🎨 Features
 
-- 💬 Real-time chat interface with message bubbles
-- 🎯 Seamless integration with the RAG backend API
-- 💾 Persistent conversation history using localStorage
-- 🎨 Modern UI with Radix UI and Material-UI components
-- 📱 Responsive design for desktop and mobile
-- 🌙 Support for theming with next-themes
-- ⚡ Fast development with Vite and Hot Module Replacement (HMR)
+- 💬 Real-time chat interface with user and assistant message bubbles
+- ✍️ Markdown-style bold rendering inside assistant messages
+- ⏳ Animated typing indicator while waiting for the backend response
+- 📜 **Citations panel** — expandable list of legal sources used in each answer (source name, page number, text snippet; links to GitHub source when available)
+- ⚙️ **Workflow trace panel** — collapsible breakdown of every tool step executed by the backend agent (tool name, status, duration, validation score)
+- 📝 **Technical sheet modal** — in-app project documentation with PDF download and print support (via `html2pdf.js`)
+- 💡 **Empty state** with three clickable suggestion chips to start a conversation
+- 🖨️ **Toast notifications** via `AppSnackbar` for API errors
+- 💾 Persistent conversation ID stored in `localStorage` for multi-turn context
+- 🔄 Automatic fallback to mock responses when the backend is unreachable
 
 ## 🛠️ Tech Stack
 
-- **Framework**: React 18
-- **Language**: TypeScript
-- **Build Tool**: Vite
-- **UI Components**: 
-  - Radix UI (accessible component primitives)
-  - Material-UI (MUI) for icons and additional components
-- **Styling**: 
-  - Tailwind CSS
-  - Emotion (CSS-in-JS)
-- **Additional Libraries**:
-  - lucide-react (icons)
-  - date-fns (date utilities)
-  - motion (animations)
-  - cmdk (command palette)
+| Category | Technology |
+|----------|------------|
+| Framework | React 18 + TypeScript |
+| Build tool | Vite 6 + HMR |
+| UI components | Material-UI (MUI) v7 |
+| Primitive components | Radix UI |
+| Styling | Tailwind CSS + Emotion (CSS-in-JS) |
+| Icons | MUI Icons, lucide-react |
+| Animations | Framer Motion (`motion`) |
+| PDF export | html2pdf.js |
+| Date formatting | date-fns |
+| Command palette | cmdk |
 
 ## 🚀 Getting Started
 
@@ -86,61 +86,115 @@ The built files will be in the `dist/` directory.
 chat-ui/
 ├── src/
 │   ├── app/
-│   │   ├── App.tsx              # Main application component
-│   │   ├── types.ts             # TypeScript type definitions
-│   │   └── components/
-│   │       ├── figma/           # Figma-imported components
-│   │       └── ui/              # Reusable UI components
+│   │   ├── App.tsx                        # Root component: state, send/receive logic
+│   │   ├── TechnicalSheetPage.tsx         # Standalone technical sheet route
+│   │   ├── types.ts                       # Shared TypeScript interfaces
+│   │   ├── components/
+│   │   │   ├── ui/
+│   │   │   │   ├── message-bubble.tsx         # User / assistant / typing bubbles
+│   │   │   │   ├── citations-panel.tsx        # Expandable legal sources panel
+│   │   │   │   ├── workflow-trace-panel.tsx   # Collapsible agent execution trace
+│   │   │   │   ├── header.tsx                 # App bar with clear-chat + tech sheet
+│   │   │   │   ├── empty-state.tsx            # Intro screen with suggestion chips
+│   │   │   │   ├── app-snackbar.tsx           # Toast notification wrapper
+│   │   │   │   ├── technical-sheet.tsx        # In-modal tech sheet with PDF export
+│   │   │   │   └── [Radix UI / shadcn primitives]
+│   │   │   └── figma/
+│   │   │       └── ImageWithFallback.tsx
+│   │   └── utils/
+│   │       └── sourceLinks.ts             # Maps source names → display labels & URLs
 │   ├── services/
-│   │   └── chatService.ts       # API client for backend
+│   │   └── chatService.ts             # HTTP client for POST /chat
 │   ├── mocks/
-│   │   └── mockService.ts       # Mock responses for development
+│   │   └── mockService.ts             # Deterministic mock responses
 │   └── styles/
-│       ├── index.css            # Global styles
-│       ├── tailwind.css         # Tailwind imports
-│       ├── theme.css            # Theme variables
-│       └── muiTheme.ts          # Material-UI theme
-├── index.html                    # HTML entry point
-├── vite.config.ts               # Vite configuration
-└── package.json                 # Dependencies and scripts
+│       ├── colors.ts                  # Central colour palette
+│       ├── muiTheme.ts                # Material-UI custom theme
+│       ├── traceability.css           # Styles for citations & trace panels
+│       ├── theme.css                  # CSS custom properties
+│       └── index.css                  # Global resets
+├── index.html
+├── vite.config.ts
+└── package.json
 ```
 
 ## 🔌 API Integration
 
-The chat interface communicates with the backend API through the `chatService.ts` module:
+All backend communication goes through `src/services/chatService.ts`.
 
-- **Endpoint**: `POST /chat`
-- **Request**: 
-  ```json
-  {
-    "question": "string",
-    "conversation_id": "string (optional)",
-    "max_citations": "number (optional)"
+**Endpoint**: `POST /chat`
+
+**Request**
+```json
+{
+  "question": "string",
+  "conversation_id": "string (optional)",
+  "max_citations": "number (optional)"
+}
+```
+
+**Response**
+```json
+{
+  "ok": true,
+  "request_id": "uuid",
+  "answer": "string",
+  "citations": [
+    { "source": "DECRETO 1072 DE 2015", "page": 200, "chunk_id": "chunk_42", "snippet": "..." }
+  ],
+  "trace": { "intent": "domainSearch", "top_k": 4, "vector_db": "chroma", "llm_provider": "groq" },
+  "workflow_trace": {
+    "conversation_id": "uuid",
+    "total_steps": 5,
+    "tools_used": ["classify_intent", "semantic_search", "generate_grounded_answer", "validate_answer"],
+    "tool_traces": [ { "tool_name": "...", "status": "success", "duration_ms": 120 } ],
+    "validation_passed": true,
+    "validation_details": { "coherence_score": 0.91, "grounding_score": 0.87, "hallucination_detected": false }
   }
-  ```
-- **Response**: Returns the answer, citations, and trace information
+}
+```
 
-Conversation IDs are automatically generated and stored in localStorage to maintain conversation context across sessions.
+A `conversation_id` is auto-generated on first load and persisted in `localStorage`. It is sent on every request to maintain multi-turn context on the backend.
+
+## 🧙 Key Components
+
+### `MessageBubble`
+Renders a single chat turn. Handles four roles: `user`, `assistant`, `typing`, and `error`. Assistant bubbles support inline `**bold**` markdown and embed `CitationsPanel` and `WorkflowTracePanel` when the response includes the corresponding data.
+
+### `CitationsPanel`
+Expandable panel attached to assistant messages that contain legal citations. Groups results under a "Fuentes Legales" header with a count badge. Each citation shows the document name (with a GitHub link when available via `sourceLinks.ts`), page number, and the exact text snippet retrieved from ChromaDB.
+
+### `WorkflowTracePanel`
+Collapsible panel (collapsed by default) that exposes the backend agent execution trace. Shows each tool step with its name, success/failure status icon, and execution duration. Displays overall validation pass/fail and coherence/grounding scores from the `validate_answer` tool.
+
+### `Header`
+Fixed app bar with the application title and two action buttons: clear conversation (with confirmation) and open the in-app Technical Sheet modal.
+
+### `EmptyState`
+Shown when there are no messages. Displays three pre-built suggestion chips (`Contrato a término fijo`, `Despido con justa causa`, `Liquidación de prestaciones`) that prefill the input on click.
+
+### `TechnicalSheet`
+Full project technical documentation rendered inside a `Dialog`. Includes a **Download PDF** button (powered by `html2pdf.js`) and a **Print** button.
 
 ## 🎨 Design
 
-This project was designed in Figma. The original design is available at:
+Original design created in Figma:
 https://www.figma.com/design/g0IeqeYWfcyYCMUPH1gbJL/Single-page-React-Chat-UI
 
 ## 📝 Usage
 
-1. Type your question in the chat input field at the bottom
-2. Press Enter or click the send button
-3. The assistant will process your question and respond with:
-   - For labor law questions: Detailed answers based on Colombian labor legislation with citations
-   - For general questions: Direct answers using the AI model
-4. Your conversation history is preserved across browser sessions
+1. Open `http://localhost:5173` in your browser.
+2. Type a question or click one of the suggestion chips.
+3. The assistant responds with:
+   - The generated answer (with inline bold formatting)
+   - A **Fuentes Legales** panel listing the legal fragments used
+   - A **Detalles del Procesamiento** panel showing which agent tools ran and their duration
+4. Conversation history is preserved across browser sessions via `localStorage`.
 
 ## 🧪 Development
 
-The application uses Vite's fast HMR for rapid development. Changes to source files are reflected immediately in the browser.
+Vite's HMR reflects source changes immediately in the browser.
 
 ### Mock Mode
 
-If the backend API is not available, the application automatically falls back to mock responses defined in `src/mocks/mockService.ts`.
-  
+When `VITE_API_URL` is not set, `chatService.ts` falls back to `src/mocks/mockService.ts`, which returns deterministic mock responses — no backend required for UI development.
