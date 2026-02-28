@@ -71,12 +71,13 @@ export default function App() {
     setMessages((prev) => [...prev, typingMsg]);
 
     try {
-      const answer = await sendMessageRequest(text, conversationId);
+      const response = await sendMessageRequest(text, conversationId);
       const assistantMsg: Message = {
         id: genId(),
         role: "assistant",
-        text: answer,
+        text: typeof response === "string" ? response : response.answer,
         ts: new Date().toISOString(),
+        citations: typeof response !== "string" ? response.citations : undefined,
       };
       // Replace typing indicator with actual response
       setMessages((prev) =>

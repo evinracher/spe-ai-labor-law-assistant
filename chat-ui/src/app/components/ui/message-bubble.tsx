@@ -1,6 +1,7 @@
 import { Box, Typography } from "@mui/material";
 import { COLORS } from "../../../styles/colors";
 import type { Message } from "../../types";
+import CitationsPanel from "./citations-panel";
 
 // ─── FORMAT TIME ─────────────────────────────────────────────────────────────
 function formatTime(isoString: string): string {
@@ -70,11 +71,12 @@ export default function MessageBubble({ msg }: { msg: Message }) {
         flexDirection: "column",
         alignItems: isUser ? "flex-end" : "flex-start",
         mb: 1.5,
+        width: "100%",
       }}
     >
       <Box
         sx={{
-          maxWidth: isUser ? "72%" : "78%",
+          maxWidth: isUser ? "72%" : "80%",
           backgroundColor: isUser
             ? COLORS.userBubble
             : isError
@@ -112,6 +114,13 @@ export default function MessageBubble({ msg }: { msg: Message }) {
           <MessageText text={msg.text} />
         )}
       </Box>
+
+      {/* Citations Panel - Shows legal sources */}
+      {!isTyping && !isUser && msg.citations && msg.citations.length > 0 && (
+        <Box sx={{ maxWidth: isUser ? "72%" : "80%", width: "100%", mt: 0.75 }}>
+          <CitationsPanel citations={msg.citations} defaultExpanded={true} />
+        </Box>
+      )}
 
       {!isTyping && (
         <Typography
