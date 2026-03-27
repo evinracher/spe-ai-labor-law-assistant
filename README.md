@@ -23,10 +23,12 @@ This project implements a conversational AI assistant specialized in Colombian l
 
 The system consists of:
 - **Intent Classifier**: Uses LangGraph to classify user questions as labor law queries or general questions
-- **RAG Pipeline**: For labor law queries, retrieves relevant context from the knowledge base before generating responses
-- **General Q&A**: Handles general questions using a general-purpose language model
-- **Vector Database**: Stores embeddings of Colombian labor law documents (ChromaDB)
-- **LLM Integration**: Generates natural language responses using Groq/Gemini APIs
+- **Multi-node Agent Flow**: Routes labor-law queries through specialized nodes (`domainSearch`, `summarize`, `compare`, `draftDocument`) and validation
+- **RAG Pipeline**: For labor law queries, performs dynamic retrieval from ChromaDB and generates grounded answers with citations
+- **General Q&A**: Handles general questions with direct LLM responses
+- **Vector Database**: Stores embeddings and legal chunks in persistent ChromaDB collections
+- **LLM Integration**: Generates natural language responses using Groq and Gemini APIs
+- **Legal Tools Layer**: Enables law/article lookup, jurisprudence support, citation checks, and labor-risk evaluation
 - **Chat Interface**: Modern React-based UI with TypeScript and Vite
 - **Conversation Memory**: In-memory conversation history with persistent conversation IDs
 
@@ -38,7 +40,7 @@ The system consists of:
 - **Vector Database**: ChromaDB (persistent local storage)
 - **Backend**: FastAPI with Uvicorn
 - **Programming Language**: Python 3.11+
-- **Embeddings**: TODO: sentence-transformers (paraphrase-multilingual-MiniLM-L12-v2)
+- **Embeddings**: Google Generative AI embeddings (`models/gemini-embedding-001`) for ingestion/retrieval, with configurable provider support
 - **Additional Libraries**: Pydantic, LangChain, httpx
 
 ### Frontend
@@ -50,10 +52,9 @@ The system consists of:
 
 ## 📚 Data Sources
 
-<!-- TODO: Specify the Colombian labor law sources used -->
 - Colombian Labor Code (Código Sustantivo del Trabajo)
-- TODO: Add specific legal databases and documents
-- TODO: Specify data collection and processing methods
+- Complementary Colombian labor norms and legal documents ingested from the project corpus
+- Document processing pipeline: PDF extraction, cleaning, semantic chunking, embeddings, and persistent indexing in ChromaDB
 
 ## 🚀 Getting Started
 
@@ -244,38 +245,31 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development practices and contributio
 
 ## 📄 License
 
-<!-- TODO: Specify license -->
-TODO: Add license information (e.g., MIT, Apache 2.0, GPL-3.0)
+No license has been specified yet in this repository.
 
-## 🗺️ Roadmap
+## ✅ Done Features
 
-### Completed ✅
-- [x] Backend API with FastAPI
-- [x] Intent classification (labor law vs. general questions)
-- [x] General question answering capability
-- [x] Conversation history management with LangGraph
-- [x] React chat interface with modern UI components
-- [x] Integration with Groq and Gemini LLM providers
-- [x] Mock RAG for development
+### Technical Features
+- [x] FastAPI backend with `GET /health` and `POST /chat`
+- [x] LangGraph-driven orchestration and intent classification
+- [x] Groq and Gemini provider integration
+- [x] Persistent ChromaDB vector storage
+- [x] Dynamic retrieval of legal context for RAG answers
+- [x] Legal-tool integration for law/article search, metadata, jurisprudence, and verification
+- [x] PDF ingestion pipeline with cleaning, semantic chunking, and vector indexing
+- [x] Request/response validation with Pydantic models and execution trace support
 
-### In Progress 🚧
-- [ ] Document ingestion pipeline for Colombian labor law corpus
-- [ ] Vector database integration with ChromaDB
-- [ ] Sentence-transformers embeddings implementation
-- [ ] Full RAG pipeline with actual document retrieval
-- [ ] Citation and reference system with source documents
-
-### Planned 📋
-- [ ] Multi-language support (Spanish/English interface)
-- [ ] Enhanced conversation context management
-- [ ] Document upload and custom corpus management
-- [ ] Advanced search filters and query refinement
-- [ ] Performance monitoring and analytics
+### Architectural Features
+- [x] Intent-based routing between legal-domain and general-question flows
+- [x] Multi-node legal workflow (`domainSearch`, `summarize`, `compare`, `draftDocument`)
+- [x] Validation step before final response delivery
+- [x] Citation-aware answer generation for legal queries
+- [x] Conversation thread continuity through persistent conversation IDs
+- [x] Decoupled frontend/backend architecture (React + FastAPI)
 
 ## 📧 Contact
 
-<!-- TODO: Add contact information -->
-TODO: Add maintainer contact information
+For support, maintenance, or collaboration, use repository Issues and Pull Requests.
 
 ## ⚠️ Disclaimer
 
@@ -283,5 +277,5 @@ This chatbot is an educational/assistive tool and should not be considered as pr
 
 ## 🙏 Acknowledgments
 
-<!-- TODO: Add acknowledgments -->
-- TODO: Credit data sources, libraries, and contributors
+- Colombian labor law public sources used for the legal corpus
+- Open-source ecosystem: FastAPI, LangGraph, LangChain, ChromaDB, React, Vite, Radix UI, and Material UI
