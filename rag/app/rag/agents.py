@@ -44,6 +44,7 @@ from app.rag.prompts import (
     SUMMARIZE_PROMPT,
     COMPARE_PROMPT,
     VALIDATE_PROMPT,
+    DRAFT_DOCUMENT_PROMPT
 )
 from app.rag.retriever import recuperar_contexto_dinamico, formatear_documentos_para_gemini
 from app.rag.tools import (
@@ -56,6 +57,9 @@ from app.rag.tools import (
     # Validation Tools
     verify_citation_exists,
     check_law_vigency,
+    evaluar_riesgo_laboral,
+    # Tool de generación de documentos legales
+    generar_documento_legal,
     # Tools registry
     TOOLS_DICT,
 )
@@ -126,6 +130,7 @@ DOMAIN_SEARCH_TOOLS = [
     search_by_law_number,
     get_article_text,
     find_related_jurisprudence,
+    evaluar_riesgo_laboral,
 ]
 
 SUMMARIZE_TOOLS = [
@@ -144,6 +149,11 @@ VALIDATE_TOOLS = [
     verify_citation_exists,
     check_law_vigency,
 ]
+
+DRAFT_DOCUMENT_TOOLS = [
+    generar_documento_legal,
+]
+
 
 # ====================================================================
 # ReAct Agents per Node (using create_agent)
@@ -181,12 +191,21 @@ validate_agent = create_agent(
     name="validate_agent"
 )
 
-print("✅ ReAct agents created: domain_search, summarize, compare, validate")
+#Agente redactor de documentos legales
+draft_document_agent = create_agent(
+    model=gemini_LLM,
+    tools=DRAFT_DOCUMENT_TOOLS,
+    system_prompt=DRAFT_DOCUMENT_PROMPT,
+    name="draft_document_agent"
+)
+
+
+print("✅ ReAct agents created: domain_search, summarize, compare, validate, draft_document")
 
 
 class ClassifierOutput(BaseModel):
     question: str = Field(description="The original user question.")
-    intent: Literal["domainSearch", "summarize", "compare", "generalSearch"] = Field(
+    intent: Literal["domainSearch", "summarize", "compare", "generalSearch", "draftDocument"] = Field(
         description="User intent."
     )
 
@@ -194,7 +213,7 @@ class ClassifierOutput(BaseModel):
 class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     question: str
-    intent: Literal["domainSearch", "summarize", "compare", "generalSearch"]
+    intent: Literal["domainSearch", "summarize", "compare", "generalSearch", "draftDocument"]
     instruccion_especifica: str  # Instrucción específica del nodo de intención
     contexto_legal: str  # Contexto recuperado de la base vectorial
     laws_hint: str  # Leyes detectadas por list_laws_by_topic (opcional)
@@ -208,7 +227,32 @@ classifier_chain = CLASSIFIER_PROMPT | gemini_LLM.with_structured_output(Classif
 
 def classifier_node(state: GraphState):
     question = state["messages"][-1].content
-    classification_result = classifier_chain.invoke({"question": question})
+    
+    # Si la conversación tiene al menos 2 mensajes (pregunta y respuesta previa)
+    if len(state["messages"]) >= 2:
+        last_msg = state["messages"][-2]
+        
+        # 1. Extraer el texto de forma segura (por si Gemini devuelve una lista)
+        content_raw = last_msg.content
+        if isinstance(content_raw, list):
+            contenido_anterior = " ".join(str(b) for b in content_raw).lower()
+        else:
+            contenido_anterior = str(content_raw).lower()
+            
+        # 2. Búsqueda de contexto amplia
+        bot_pedia_datos = any(p in contenido_anterior for p in ["nombre", "empresa", "empleador"])
+        bot_hablaba_documento = any(p in contenido_anterior for p in ["documento", "redactar", "carta", "información"])
+        
+        if bot_pedia_datos and bot_hablaba_documento:
+            print(f"{_RED}[DEBUG]: OVERRIDE ACTIVADO - El usuario está dando los datos para el documento.{_RESET}")
+            return {"question": question, "intent": "draftDocument"}
+    
+    historial = _build_conversation_history(state["messages"], max_turns=10)
+    
+    classification_result = classifier_chain.invoke({
+        "question": question, 
+        "historial": historial
+        })
     return {"question": classification_result.question, "intent": classification_result.intent}
 
 
@@ -241,7 +285,9 @@ def domain_search_node(state: GraphState):
         f"1. Si el contexto proporcionado es SUFICIENTE para responder, genera la respuesta directamente\n"
         f"2. Si necesitas información MÁS ESPECÍFICA (ley exacta, artículo, jurisprudencia), usa las herramientas\n"
         f"3. Cita las fuentes exactas (Ley X, Artículo Y)\n"
-        f"4. Responde SIEMPRE en español"
+        f"4. Responde SIEMPRE en español\n"
+        f"5. Si notas abuso laboral, o riesgos laborales y/o legales, usa la herramienta 'evaluar_riesgo_laboral' e incluye el semáforo al final.\n"
+        f"6. NUNCA redactes documentos legales completos aquí. Solo SUGIERE al usuario: 'Si deseas, puedo ayudarte a redactar un documento legal, solo pídeme que lo genere'."
     )
     
     # Invocar el agente ReAct - él decide si usa tools o responde directo
@@ -407,7 +453,12 @@ def validate_node(state: GraphState):
             })
             
             final_message = result["messages"][-1]
-            validation_result = final_message.content if hasattr(final_message, 'content') else str(final_message)
+            #validation_result = final_message.content if hasattr(final_message, 'content') else str(final_message)
+            
+            if isinstance(final_message.content, list):
+                validation_result = " ".join(str(b) for b in final_message.content)
+            else:
+                validation_result = str(final_message.content)
             
             # Log de tools usadas
             tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
@@ -442,6 +493,35 @@ def validate_node(state: GraphState):
     
     return {"is_valid": is_valid}
 
+def draft_document_node(state: GraphState):
+    print(f"{_RED}[DEBUG]: draft_document_node (ReAct){_RESET}")
+    question = state["question"]
+    contexto_previo = state.get("contexto_legal", "")
+    historial = _build_conversation_history(state["messages"])
+    
+    prompt_con_contexto = (
+        f"{historial}"
+        f"CONTEXTO LEGAL (Para citar leyes en el documento si es necesario):\n{contexto_previo}\n\n"
+        f"SOLICITUD DEL USUARIO: {question}\n\n"
+        f"ERES UN ABOGADO REDACTOR. El usuario quiere que generes un documento legal.\n"
+        f"REGLAS ESTRICTAS DE REDACCIÓN:\n"
+        f"1. ANALIZA LA INFORMACIÓN: Para usar tu herramienta 'generar_documento_legal', necesitas saber a quién va dirigido (nombre de la empresa/jefe) y detalles básicos de los hechos.\n"
+        f"2. ACCIÓN SI FALTAN DATOS: NO uses la herramienta y NO redactes nada. Limítate a responderle al usuario amablemente pidiendo los datos exactos que te faltan (Tu nombre completo, el nombre de la empresa o tu jefe, y el motivo exacto de la reclamación).\n"
+        f"3. FILTRO DE VIABILIDAD LEGAL: Si al leer los hechos notas que el usuario cometió una falta gravísima (ej: robo, agresión comprobada) o que la solicitud carece de viabilidad legal evidente (ej: despido es COMPLETAMENTE LEGAL bajo el Código Sustantivo del Trabajo), NO redactes el documento de inmediato. Adviértele de forma respetuosa que sus acciones constituyen una 'Justa Causa' de despido y que un proceso legal tendría muy pocas probabilidades de éxito. Pregúntale si, asumiendo este riesgo, aún desea generar el documento.\n"
+        f"4. SI TIENES LOS DATOS Y ES VIABLE: Usa la herramienta 'generar_documento_legal'."
+        f"5. TIENES ESTRICTAMENTE PROHIBIDO redactar el documento legal tú mismo en el chat. La ÚNICA forma permitida de entregar un documento es invocando tu herramienta 'generar_documento_legal'.\n"
+        f"6. PROHIBIDO USAR CORCHETES: Si para generar el documento necesitas usar espacios en blanco o corchetes como [Tu Nombre] o [Nombre de la Empresa], SIGNIFICA QUE TE FALTAN DATOS.\n"
+    )
+    
+    result = draft_document_agent.invoke({
+        "messages": [{"role": "user", "content": prompt_con_contexto}]
+    })
+    
+    final_message = result["messages"][-1]
+    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
+    
+    return {"messages": [AIMessage(content=agent_response)]}
+
 
 def validate_route(state: GraphState) -> Literal["rag_node", "__end__"]:
     if state["is_valid"]:
@@ -456,7 +536,7 @@ def classify_route(
 ) -> Literal["rag_node", "general_search_node"]:
     """Ruta después del classifier: RAG para intents legales, directo para general."""
     intent = state["intent"]
-    if intent in ["domainSearch", "summarize", "compare"]:
+    if intent in ["domainSearch", "summarize", "compare", "draftDocument"]:
         return "rag_node"  # Primero retrieval
     else:
         return "general_search_node"  # No necesita RAG
@@ -464,16 +544,17 @@ def classify_route(
 
 def rag_route(
     state: GraphState,
-) -> Literal["domain_search_node", "summarize_node", "compare_node"]:
+) -> Literal["domain_search_node", "summarize_node", "compare_node", "draft_document_node"]:
     """Ruta después del rag_node: al nodo experto según intent."""
     intent = state["intent"]
     if intent == "domainSearch":
         return "domain_search_node"
     elif intent == "summarize":
         return "summarize_node"
-    else:  # compare
+    elif intent == "compare":
         return "compare_node"
-
+    elif intent == "draftDocument":
+        return "draft_document_node"
 
 graph = StateGraph(GraphState)
 
@@ -483,6 +564,7 @@ graph.add_node("summarize_node", summarize_node)
 graph.add_node("compare_node", compare_node)
 graph.add_node("general_search_node", general_search_node)
 graph.add_node("validate_node", validate_node)
+graph.add_node("draft_document_node", draft_document_node)
 #graph.add_node("integrate_node", integrate_node)
 graph.add_node("rag_node", rag_node)
 
@@ -494,6 +576,7 @@ graph.add_conditional_edges("rag_node", rag_route)  # rag_node → experto segú
 graph.add_edge("domain_search_node", "validate_node")
 graph.add_edge("summarize_node", "validate_node")
 graph.add_edge("compare_node", "validate_node")
+graph.add_edge("draft_document_node", "validate_node")
 graph.add_edge("general_search_node", "validate_node")  # No necesita RAG
 graph.add_conditional_edges("validate_node", validate_route)
 

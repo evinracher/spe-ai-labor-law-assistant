@@ -6,6 +6,8 @@ from langchain_core.tools import tool
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
 from app.core.config import settings
+from datetime import datetime
+
 if TYPE_CHECKING:
     pass
 
@@ -545,6 +547,71 @@ def verify_citation_exists(law_name: str, article_number: str) -> dict:
             "error": str(e)
         }
 
+@tool
+def evaluar_riesgo_laboral(clausula_o_situacion: str) -> str:
+    """
+    Útil para evaluar el riesgo legal de una situación laboral, un despido o una cláusula de contrato.
+    Analiza la situación y devuelve un semáforo de riesgo para el trabajador.
+    """
+    # Como herramienta, le damos al LLM una estructura estricta que debe llenar.
+    plantilla_semaforo = (
+        "INSTRUCCIÓN PARA EL ASISTENTE: Acabas de activar la herramienta de evaluación de riesgo. "
+        "REGLA DE ORO: PRIMERO debes darle al usuario una respuesta legal completa, empática y detallada "
+        "explicando su situación según la ley. LUEGO, al final de tu respuesta, añade EXACTAMENTE esta sección "
+        "para resumir visualmente su caso:\n\n"
+        "🚦 **SEMÁFORO DE RIESGO LEGAL** 🚦\n"
+        "🔴 **ALTO RIESGO / ILEGALIDAD:** (Derechos vulnerados).\n"
+        "🟡 **ZONA GRIS:** (Falta de pruebas o prácticas dudosas).\n"
+        "🟢 **SEGURO / LEGAL:** (Lo que está en regla).\n\n"
+        "💡 **RECOMENDACIÓN:** (Qué debe hacer a continuación. AQUÍ ES DONDE LE SUGIERES REDACTAR UN DOCUMENTO SI ES NECESARIO)."
+    )
+    return plantilla_semaforo
+
+@tool
+def generar_documento_legal(tipo_documento: str, nombre_usuario: str, hechos_clave:str) -> str:
+    """
+    Útil para redactar borradores legales como 'Derecho de Petición', 'Carta de Renuncia Motivada' o 'Queja Laboral'.
+    
+    REGLA DE ORO: Si detectas que al usuario le están vulnerando un derecho, SUGIERE usar esta herramienta primero.
+    
+    REGLAS ESTRICTAS PARA USAR ESTA HERRAMIENTA:
+    1. NO PUEDES inventar el 'nombre_usuario' ni el 'nombre_empresa_o_jefe'.
+    2. NO PUEDES usar corchetes como [Nombre del trabajador].
+    3. Si NO TIENES los nombres exactos provistos por el usuario en esta conversación, 
+       TIENES PROHIBIDO ejecutar esta herramienta. Debes responderle al usuario 
+       pidiéndole exactamente los datos que te faltan.
+    
+    Solo ejecútala si el usuario te dice expresamente 'Sí, genéralo', 'Redacta el documento' o similares.
+    """
+    fecha_hoy = datetime.now().strftime("%d de %B de %Y")
+    
+    borrador = f"""
+    📄 **BORRADOR GENERADO AUTOMÁTICAMENTE: {tipo_documento.upper()}** 📄
+    
+    **Fecha:** {fecha_hoy}
+    **De:** {nombre_usuario if nombre_usuario else '[TU NOMBRE AQUÍ]'}
+    **Para:** [NOMBRE DEL EMPLEADOR / EMPRESA]
+    
+    **Asunto:** {tipo_documento}
+    
+    Respetados señores,
+    
+    Por medio del presente documento, me dirijo a ustedes para exponer los siguientes hechos:
+    {hechos_clave}
+    
+    Por lo anterior, y amparado en la legislación laboral colombiana y el Código Sustantivo del Trabajo, solicito formalmente:
+    [ESCRIBE AQUÍ TU PETICIÓN ESPECÍFICA (Ej: El pago de la liquidación adeudada, el reintegro, etc.)]
+    
+    Quedo atento(a) a una pronta respuesta conforme a los términos de ley.
+    
+    Atentamente,
+    
+    ___________________________
+    Firma
+    C.C. [TU CÉDULA]
+    """
+    return borrador
+
 TOOLS_LIST = [
     search_by_law_number,
     get_article_text,
@@ -553,6 +620,8 @@ TOOLS_LIST = [
     check_law_vigency,
     find_related_jurisprudence,
     verify_citation_exists,
+    evaluar_riesgo_laboral,
+    generar_documento_legal
 ]
 
 TOOLS_DICT = {
@@ -563,4 +632,6 @@ TOOLS_DICT = {
     "check_law_vigency": check_law_vigency,
     "find_related_jurisprudence": find_related_jurisprudence,
     "verify_citation_exists": verify_citation_exists,
+    "evaluar_riesgo_laboral": evaluar_riesgo_laboral,
+    "generar_documento_legal": generar_documento_legal
 }
