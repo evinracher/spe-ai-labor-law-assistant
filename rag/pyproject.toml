@@ -51,10 +51,13 @@ dependencies = [
     "langgraph>=0.2.0",
 
     # --- LangChain integrations ---
+    "langchain>=0.3.0",                  # Core langchain (agents, chains)
+    "langchain-core>=0.3.0",             # Base abstractions (messages, tools, prompts)
     "langchain-chroma>=1.1.0",           # Chroma vector store integration
     "langchain-community>=0.4.0",        # Document loaders (PyPDFLoader)
     "langchain-text-splitters>=1.1.0",   # Text splitting utilities
     "langchain-huggingface>=1.0.0",      # HuggingFace embeddings
+    "langchain-experimental>=0.3.0",     # SemanticChunker and experimental splitters
     "sentence-transformers>=3.0.0",      # Required by langchain-huggingface
 ]
 
