@@ -3,6 +3,8 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_huggingface import HuggingFaceEmbeddings
 import re
 
 def limpiar_texto(texto: str) -> str:
@@ -53,21 +55,41 @@ def procesar_pdf(ruta_archivo):
         for doc in documentos:
             doc.page_content = limpiar_texto(doc.page_content)
             
-        # Paso 2: Configuración del fragmentador
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, 
-            chunk_overlap=150,
-            separators=["\nARTÍCULO", "\nPARÁGRAFO", "\nCAPÍTULO", "\nTÍTULO", "\n\n", "\n", " ", ""]
+        ## Paso 2: Configuración del fragmentador
+        #text_splitter = RecursiveCharacterTextSplitter(
+        #    chunk_size=1000, 
+        #    chunk_overlap=150,
+        #    separators=["\nARTÍCULO", "\nPARÁGRAFO", "\nCAPÍTULO", "\nTÍTULO", "\n\n", #"\n", " ", ""]
+        #)
+        
+        print(f"🧠 Aplicando Semantic Chunking a {ruta_archivo}...")
+        
+        # Paso 2: Configuración del Fragmentador Semántico con Google
+        google_key = os.getenv("GOOGLE_API_KEY")
+        if not google_key:
+            raise ValueError("GOOGLE_API_KEY no está configurada en el entorno")
+            
+        embeddings_gemini = GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=google_key
         )
         
-        # Paso 3: División
-        chunks = text_splitter.split_documents(documentos)
+        # Usamos el modelo de Gemini para decidir dónde cortar el texto
+        semantic_chunker = SemanticChunker(
+            embeddings_gemini, 
+            breakpoint_threshold_type="percentile", 
+            breakpoint_threshold_amount=85 
+        )
+        
+        # Paso 3: División Semántica
+        chunks = semantic_chunker.split_documents(documentos)
         
         # Paso 4: Metadatos para trazabilidad
         for i, chunk in enumerate(chunks):
             chunk.metadata['chunk_id'] = f"chunk_{i}"
             chunk.metadata['doc_id'] = chunk.metadata.get('source', 'documento_desconocido')
-            
+        
+        print(f"✅ Se generaron {len(chunks)} fragmentos semánticos.") 
         return chunks
     except Exception as e:
         print(f"Error al procesar el PDF {ruta_archivo} con error: {e}")
@@ -83,6 +105,16 @@ def crear_indice_vectorial(chunks):
     - Mejor comprensión semántica en español
     - Mejor manejo de terminología legal
     """
+    chunks_validos = []
+    for chunk in chunks:
+        # Solo guardamos el chunk si después de quitarle los espacios tiene contenido
+        if chunk.page_content and chunk.page_content.strip():
+            chunks_validos.append(chunk)
+            
+    chunks_vacios = len(chunks) - len(chunks_validos)
+    print(f"🧹 Filtro de calidad: Se descartaron {chunks_vacios} chunks vacíos.")
+    print(f"🚀 Enviando {len(chunks_validos)} chunks válidos a la API de Google...")
+    
     # Google embedding-001 - Modelo estable de Google
     google_key = os.getenv("GOOGLE_API_KEY")
     if not google_key:
@@ -97,7 +129,7 @@ def crear_indice_vectorial(chunks):
     
     # Crear y persistir la base de datos Chroma localmente
     vectorstore = Chroma.from_documents(
-        documents=chunks,
+        documents=chunks_validos,
         embedding=embeddings,
         persist_directory="./db_chroma"
     )

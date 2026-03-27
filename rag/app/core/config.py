@@ -18,12 +18,16 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Ruta absoluta al directorio rag/ donde está el .env
+_RAG_DIR = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _RAG_DIR / ".env"
+
 
 class Settings(BaseSettings):
     """All runtime configuration for the Colombian Labor Law RAG backend."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

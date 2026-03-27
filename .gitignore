@@ -4,3 +4,8 @@
 .venv
 .env
 !.env.local
+# ChromaDB databases
+db_chroma/
+rag/db_chroma/
+storage/
+*.sqlite3
