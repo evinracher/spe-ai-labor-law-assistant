@@ -8,6 +8,22 @@ This project implements a conversational AI assistant specialized in Colombian l
 - **Answer labor law questions**: Retrieves relevant legal information from a curated knowledge base and generates accurate, contextual responses about labor rights, employment regulations, and legal procedures in Colombia.
 - **Answer general questions**: Handles general queries outside the labor law domain using a general-purpose language model.
 
+## 🖼️ Screenshots & Demo
+
+### Chat Interface
+
+![Chat UI – Asistente de Derecho Laboral](examples/chat-ui-1.png)
+
+> The assistant answering a question about fixed-term contracts and just-cause dismissal in Colombian labor law, with structured, citation-ready responses.
+
+### Demo Video
+
+A full walkthrough of the assistant in action is available as a screen recording:
+
+**[▶ Watch demo.mp4](examples/demo.mp4)**
+
+---
+
 ## ✨ Features
 
 - 💬 Interactive chat interface for labor law queries and general questions
