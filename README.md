@@ -20,7 +20,7 @@ This project implements a conversational AI assistant specialized in Colombian l
 
 A full walkthrough of the assistant in action is available as a screen recording:
 
-![Demo](examples/demo.mp4)
+**[▶ Watch demo.mp4](examples/demo.mp4)**
 
 ---
 
