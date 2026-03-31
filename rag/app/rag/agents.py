@@ -36,7 +36,7 @@ from langgraph.graph import END, START, StateGraph, add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-from app.api.schemas import ChatResponse, Citation, Trace
+from app.api.schemas import ChatResponse, Citation, QueryTransformTrace, Trace
 from app.core.config import settings
 from app.rag.prompts import (
     CLASSIFIER_PROMPT,
@@ -47,6 +47,7 @@ from app.rag.prompts import (
     SUMMARIZE_PROMPT,
     VALIDATE_PROMPT,
 )
+from app.rag.query_transformer import QueryTransformer
 from app.rag.retriever import formatear_documentos_para_gemini, recuperar_contexto_dinamico
 from app.rag.tools import (
     # Tools registry
@@ -128,6 +129,10 @@ gemini_LLM = ChatGoogleGenerativeAI(
     google_api_key=settings.GOOGLE_API_KEY,
 )
 print("✅ gemini_LLM ready:", gemini_LLM.model)
+
+# Instanciamos el transformador adaptativo de consultas
+_query_transformer = QueryTransformer(fast_llm=groq_LLM, strong_llm=gemini_LLM)
+print("✅ QueryTransformer ready")
 
 # ====================================================================
 # Tool Sets per Node (Principle: Least Privilege)
@@ -218,6 +223,7 @@ class GraphState(TypedDict):
     laws_hint: str  # Leyes detectadas por list_laws_by_topic (opcional)
     is_valid: bool
     documentos_recuperados: list  # Documentos para citaciones
+    query_transform: dict  # QueryTransformResult serialized for traceability
 
 
 # Usamos gemini para la clasificación de intención porque es más fuerte en tareas de comprensión y clasificación, mientras que groq lo dejamos para manejo de la lógica del grafo.
@@ -393,20 +399,40 @@ def compare_node(state: GraphState):
 
 def rag_node(state: GraphState):
     """
-    Nodo RAG de SOLO RETRIEVAL (no genera).
+    Retrieval-only node with adaptive query transformation.
+
+    Applies HyDE, Decomposition, or passes the query through unchanged depending
+    on the QueryTransformer's analysis. Retrieved documents are deduplicated across
+    all effective queries before being stored in state.
     """
-    print(f"{_RED}[DEBUG]: rag_node - Solo retrieval (no genera){_RESET}")
+    print(f"{_RED}[DEBUG]: rag_node - Adaptive retrieval started{_RESET}")
     question = state["question"]
 
-    # Búsqueda vectorial
-    documentos = recuperar_contexto_dinamico(question, vectorstore)
-    contexto_vectorial = formatear_documentos_para_gemini(documentos)
+    # 1. Transform the query
+    transform_result = _query_transformer.transform(question)
+    print(
+        f"{_RED}[DEBUG]: rag_node - strategy={transform_result.strategy.value}, "
+        f"queries={len(transform_result.effective_queries)}{_RESET}"
+    )
 
-    print(f"{_RED}[DEBUG]: rag_node - Recuperados {len(documentos)} documentos{_RESET}")
+    # 2. Retrieve for each effective query; deduplicate by chunk_id
+    all_docs: list = []
+    seen_chunk_ids: set[str] = set()
 
-    # Extraer citaciones para el response final
+    for effective_query in transform_result.effective_queries:
+        docs = recuperar_contexto_dinamico(effective_query, vectorstore)
+        for doc in docs:
+            chunk_id: str = doc.metadata.get("chunk_id") or doc.page_content[:60]
+            if chunk_id not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk_id)
+                all_docs.append(doc)
+
+    contexto_vectorial = formatear_documentos_para_gemini(all_docs)
+    print(f"{_RED}[DEBUG]: rag_node - Total unique docs: {len(all_docs)}{_RESET}")
+
+    # 3. Build citations
     citations_list = []
-    for doc in documentos:
+    for doc in all_docs:
         cita = Citation(
             source=doc.metadata.get("doc_id", "Desconocido"),
             page=doc.metadata.get("page", None),
@@ -415,8 +441,11 @@ def rag_node(state: GraphState):
         )
         citations_list.append(cita)
 
-    # Solo guarda contexto, NO genera respuesta
-    return {"contexto_legal": contexto_vectorial, "documentos_recuperados": citations_list}
+    return {
+        "contexto_legal": contexto_vectorial,
+        "documentos_recuperados": citations_list,
+        "query_transform": transform_result.model_dump(),
+    }
 
 
 def validate_node(state: GraphState):
@@ -649,6 +678,10 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
         citations_list = state_output.get("documentos_recuperados", [])
     request_id = f"req-{uuid.uuid4().hex[:8]}-{conversation_id}"
 
+    # Build QueryTransformTrace if available (only present for RAG intents)
+    qt_data = state_output.get("query_transform")
+    qt_trace = QueryTransformTrace(**qt_data) if qt_data else None
+
     return ChatResponse(
         ok=True,
         request_id=request_id,
@@ -659,5 +692,6 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
             top_k=len(citations_list),
             vector_db=settings.VECTOR_DB,
             llm_provider=settings.LLM_PROVIDER,
+            query_transform=qt_trace,
         ),
     )
