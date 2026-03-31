@@ -3,7 +3,7 @@ ReAct-based Agents for SPE AI Labor Law Assistant
 ==================================================
 
 This module implements a multi-node RAG system where each specialized node
-uses the ReAct pattern via create_agent: the LLM DECIDES which tools to use 
+uses the ReAct pattern via create_agent: the LLM DECIDES which tools to use
 based on the question, rather than using hardcoded regex patterns.
 
 Architecture:
@@ -17,52 +17,53 @@ Architecture:
 
 Principle: Least Privilege - each node only has access to the tools it needs.
 """
+
 from __future__ import annotations
 
 import os
-import re
 import uuid
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
+from langchain.agents import create_agent
+from langchain_chroma import Chroma
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph, add_messages
-from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_chroma import Chroma
 
-from app.api.schemas import ChatResponse, Trace, Citation
+from app.api.schemas import ChatResponse, Citation, Trace
 from app.core.config import settings
 from app.rag.prompts import (
     CLASSIFIER_PROMPT,
-    GENERAL_SYSTEM_PROMPT,
-    DOMAIN_SEARCH_PROMPT,
-    SUMMARIZE_PROMPT,
     COMPARE_PROMPT,
+    DOMAIN_SEARCH_PROMPT,
+    DRAFT_DOCUMENT_PROMPT,
+    GENERAL_SYSTEM_PROMPT,
+    SUMMARIZE_PROMPT,
     VALIDATE_PROMPT,
-    DRAFT_DOCUMENT_PROMPT
 )
-from app.rag.retriever import recuperar_contexto_dinamico, formatear_documentos_para_gemini
+from app.rag.retriever import formatear_documentos_para_gemini, recuperar_contexto_dinamico
 from app.rag.tools import (
-    # Data Access Tools
-    search_by_law_number,
-    get_article_text,
-    list_laws_by_topic,
-    get_document_metadata,
-    find_related_jurisprudence,
-    # Validation Tools
-    verify_citation_exists,
+    # Tools registry
     check_law_vigency,
     evaluar_riesgo_laboral,
+    find_related_jurisprudence,
     # Tool de generación de documentos legales
     generar_documento_legal,
-    # Tools registry
-    TOOLS_DICT,
+    get_article_text,
+    get_document_metadata,
+    list_laws_by_topic,
+    # Data Access Tools
+    search_by_law_number,
+    # Validation Tools
+    verify_citation_exists,
 )
+
 #
 
 if TYPE_CHECKING:
@@ -76,13 +77,15 @@ def _build_conversation_history(messages: Sequence[BaseMessage], max_turns: int 
     """Construye un resumen del historial de conversación para pasar a los agentes."""
     if len(messages) <= 1:
         return ""
-    
+
     # Tomar los últimos N turnos (excluyendo el mensaje actual)
-    history_messages = list(messages)[:-1][-max_turns * 2:]  # *2 porque cada turno tiene user+assistant
-    
+    history_messages = list(messages)[:-1][
+        -max_turns * 2 :
+    ]  # *2 porque cada turno tiene user+assistant
+
     if not history_messages:
         return ""
-    
+
     history_lines = []
     for msg in history_messages:
         role = "Usuario" if isinstance(msg, HumanMessage) else "Asistente"
@@ -91,12 +94,17 @@ def _build_conversation_history(messages: Sequence[BaseMessage], max_turns: int 
         if len(content) > 300:
             content = content[:300] + "..."
         history_lines.append(f"{role}: {content}")
-    
+
     return "HISTORIAL DE CONVERSACIÓN:\n" + "\n".join(history_lines) + "\n\n"
+
 
 # Ruta absoluta al directorio del proyecto (rag/)
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_DB_CHROMA_PATH = os.path.join(_PROJECT_ROOT, "db_chroma")
+# Resolve CHROMA_DIR relative to the project root when it is not absolute
+_chroma_dir = settings.CHROMA_DIR
+if not _chroma_dir.is_absolute():
+    _chroma_dir = (Path(_PROJECT_ROOT) / _chroma_dir).resolve()
+_DB_CHROMA_PATH = str(_chroma_dir)
 
 groq_LLM = ChatGroq(
     model="llama-3.1-8b-instant",
@@ -109,16 +117,16 @@ print("✅ groq_LLM ready:", groq_LLM.model_name)
 embeddings = GoogleGenerativeAIEmbeddings(
     model="models/gemini-embedding-001",
     task_type="RETRIEVAL_DOCUMENT",
-    google_api_key=settings.GOOGLE_API_KEY
+    google_api_key=settings.GOOGLE_API_KEY,
 )
 vectorstore = Chroma(persist_directory=_DB_CHROMA_PATH, embedding_function=embeddings)
 
 # Instanciamos a Gemini para Clasificación y Generación Final
 gemini_LLM = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash", # Modelo actualizado
-    temperature=0.1, #Al bajar un poco la temperatura la respuesta sera mas "natural", sin embargo se puede setear en 0 si queremos respuestas mas "tecnicas" y ceñidas al contexto
-    google_api_key=settings.GOOGLE_API_KEY
-    )
+    model="gemini-2.5-flash",  # Modelo actualizado
+    temperature=0.1,  # Al bajar un poco la temperatura la respuesta sera mas "natural", sin embargo se puede setear en 0 si queremos respuestas mas "tecnicas" y ceñidas al contexto
+    google_api_key=settings.GOOGLE_API_KEY,
+)
 print("✅ gemini_LLM ready:", gemini_LLM.model)
 
 # ====================================================================
@@ -164,39 +172,30 @@ domain_search_agent = create_agent(
     model=gemini_LLM,
     tools=DOMAIN_SEARCH_TOOLS,
     system_prompt=DOMAIN_SEARCH_PROMPT,
-    name="domain_search_agent"
+    name="domain_search_agent",
 )
 
 # Agente para resúmenes
 summarize_agent = create_agent(
-    model=gemini_LLM,
-    tools=SUMMARIZE_TOOLS,
-    system_prompt=SUMMARIZE_PROMPT,
-    name="summarize_agent"
+    model=gemini_LLM, tools=SUMMARIZE_TOOLS, system_prompt=SUMMARIZE_PROMPT, name="summarize_agent"
 )
 
 # Agente para comparaciones
 compare_agent = create_agent(
-    model=gemini_LLM,
-    tools=COMPARE_TOOLS,
-    system_prompt=COMPARE_PROMPT,
-    name="compare_agent"
+    model=gemini_LLM, tools=COMPARE_TOOLS, system_prompt=COMPARE_PROMPT, name="compare_agent"
 )
 
 # Agente para validación
 validate_agent = create_agent(
-    model=gemini_LLM,
-    tools=VALIDATE_TOOLS,
-    system_prompt=VALIDATE_PROMPT,
-    name="validate_agent"
+    model=gemini_LLM, tools=VALIDATE_TOOLS, system_prompt=VALIDATE_PROMPT, name="validate_agent"
 )
 
-#Agente redactor de documentos legales
+# Agente redactor de documentos legales
 draft_document_agent = create_agent(
     model=gemini_LLM,
     tools=DRAFT_DOCUMENT_TOOLS,
     system_prompt=DRAFT_DOCUMENT_PROMPT,
-    name="draft_document_agent"
+    name="draft_document_agent",
 )
 
 
@@ -205,8 +204,8 @@ print("✅ ReAct agents created: domain_search, summarize, compare, validate, dr
 
 class ClassifierOutput(BaseModel):
     question: str = Field(description="The original user question.")
-    intent: Literal["domainSearch", "summarize", "compare", "generalSearch", "draftDocument"] = Field(
-        description="User intent."
+    intent: Literal["domainSearch", "summarize", "compare", "generalSearch", "draftDocument"] = (
+        Field(description="User intent.")
     )
 
 
@@ -221,38 +220,39 @@ class GraphState(TypedDict):
     documentos_recuperados: list  # Documentos para citaciones
 
 
-#Usamos gemini para la clasificación de intención porque es más fuerte en tareas de comprensión y clasificación, mientras que groq lo dejamos para manejo de la lógica del grafo.
+# Usamos gemini para la clasificación de intención porque es más fuerte en tareas de comprensión y clasificación, mientras que groq lo dejamos para manejo de la lógica del grafo.
 classifier_chain = CLASSIFIER_PROMPT | gemini_LLM.with_structured_output(ClassifierOutput)
 
 
 def classifier_node(state: GraphState):
     question = state["messages"][-1].content
-    
+
     # Si la conversación tiene al menos 2 mensajes (pregunta y respuesta previa)
     if len(state["messages"]) >= 2:
         last_msg = state["messages"][-2]
-        
+
         # 1. Extraer el texto de forma segura (por si Gemini devuelve una lista)
         content_raw = last_msg.content
         if isinstance(content_raw, list):
             contenido_anterior = " ".join(str(b) for b in content_raw).lower()
         else:
             contenido_anterior = str(content_raw).lower()
-            
+
         # 2. Búsqueda de contexto amplia
         bot_pedia_datos = any(p in contenido_anterior for p in ["nombre", "empresa", "empleador"])
-        bot_hablaba_documento = any(p in contenido_anterior for p in ["documento", "redactar", "carta", "información"])
-        
+        bot_hablaba_documento = any(
+            p in contenido_anterior for p in ["documento", "redactar", "carta", "información"]
+        )
+
         if bot_pedia_datos and bot_hablaba_documento:
-            print(f"{_RED}[DEBUG]: OVERRIDE ACTIVADO - El usuario está dando los datos para el documento.{_RESET}")
+            print(
+                f"{_RED}[DEBUG]: OVERRIDE ACTIVADO - El usuario está dando los datos para el documento.{_RESET}"
+            )
             return {"question": question, "intent": "draftDocument"}
-    
+
     historial = _build_conversation_history(state["messages"], max_turns=10)
-    
-    classification_result = classifier_chain.invoke({
-        "question": question, 
-        "historial": historial
-        })
+
+    classification_result = classifier_chain.invoke({"question": question, "historial": historial})
     return {"question": classification_result.question, "intent": classification_result.intent}
 
 
@@ -274,7 +274,7 @@ def domain_search_node(state: GraphState):
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
     historial = _build_conversation_history(state["messages"])
-    
+
     # Prompt que incluye el contexto vectorial y el historial
     prompt_con_contexto = (
         f"{historial}"
@@ -289,26 +289,30 @@ def domain_search_node(state: GraphState):
         f"5. Si notas abuso laboral, o riesgos laborales y/o legales, usa la herramienta 'evaluar_riesgo_laboral' e incluye el semáforo al final.\n"
         f"6. NUNCA redactes documentos legales completos aquí. Solo SUGIERE al usuario: 'Si deseas, puedo ayudarte a redactar un documento legal, solo pídeme que lo genere'."
     )
-    
+
     # Invocar el agente ReAct - él decide si usa tools o responde directo
-    result = domain_search_agent.invoke({
-        "messages": [{"role": "user", "content": prompt_con_contexto}]
-    })
-    
+    result = domain_search_agent.invoke(
+        {"messages": [{"role": "user", "content": prompt_con_contexto}]}
+    )
+
     # Extraer la respuesta final
     final_message = result["messages"][-1]
-    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
-    
+    agent_response = (
+        final_message.content if hasattr(final_message, "content") else str(final_message)
+    )
+
     # Log de tools usadas
-    tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+    tool_calls = [
+        msg for msg in result["messages"] if hasattr(msg, "tool_calls") and msg.tool_calls
+    ]
     if tool_calls:
-        print(f"{_RED}[DEBUG]: domain_search_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}")
+        print(
+            f"{_RED}[DEBUG]: domain_search_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}"
+        )
     else:
         print(f"{_RED}[DEBUG]: domain_search_node - Contexto suficiente (sin tools){_RESET}")
-    
-    return {
-        "messages": [AIMessage(content=agent_response)]
-    }
+
+    return {"messages": [AIMessage(content=agent_response)]}
 
 
 def summarize_node(state: GraphState):
@@ -319,7 +323,7 @@ def summarize_node(state: GraphState):
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
     historial = _build_conversation_history(state["messages"])
-    
+
     prompt_con_contexto = (
         f"{historial}"
         f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
@@ -327,23 +331,27 @@ def summarize_node(state: GraphState):
         f"Genera un resumen estructurado. Si el contexto es suficiente, úsalo directamente. "
         f"Si necesitas más detalle de artículos específicos, usa las herramientas."
     )
-    
-    result = summarize_agent.invoke({
-        "messages": [{"role": "user", "content": prompt_con_contexto}]
-    })
-    
+
+    result = summarize_agent.invoke(
+        {"messages": [{"role": "user", "content": prompt_con_contexto}]}
+    )
+
     final_message = result["messages"][-1]
-    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
-    
-    tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+    agent_response = (
+        final_message.content if hasattr(final_message, "content") else str(final_message)
+    )
+
+    tool_calls = [
+        msg for msg in result["messages"] if hasattr(msg, "tool_calls") and msg.tool_calls
+    ]
     if tool_calls:
-        print(f"{_RED}[DEBUG]: summarize_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}")
+        print(
+            f"{_RED}[DEBUG]: summarize_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}"
+        )
     else:
         print(f"{_RED}[DEBUG]: summarize_node - Contexto suficiente (sin tools){_RESET}")
-    
-    return {
-        "messages": [AIMessage(content=agent_response)]
-    }
+
+    return {"messages": [AIMessage(content=agent_response)]}
 
 
 def compare_node(state: GraphState):
@@ -354,7 +362,7 @@ def compare_node(state: GraphState):
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
     historial = _build_conversation_history(state["messages"])
-    
+
     prompt_con_contexto = (
         f"{historial}"
         f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
@@ -362,23 +370,25 @@ def compare_node(state: GraphState):
         f"Compara los conceptos solicitados. Si el contexto tiene la información, úsalo. "
         f"Si necesitas artículos específicos de cada concepto, usa las herramientas."
     )
-    
-    result = compare_agent.invoke({
-        "messages": [{"role": "user", "content": prompt_con_contexto}]
-    })
-    
+
+    result = compare_agent.invoke({"messages": [{"role": "user", "content": prompt_con_contexto}]})
+
     final_message = result["messages"][-1]
-    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
-    
-    tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+    agent_response = (
+        final_message.content if hasattr(final_message, "content") else str(final_message)
+    )
+
+    tool_calls = [
+        msg for msg in result["messages"] if hasattr(msg, "tool_calls") and msg.tool_calls
+    ]
     if tool_calls:
-        print(f"{_RED}[DEBUG]: compare_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}")
+        print(
+            f"{_RED}[DEBUG]: compare_node - Tools adicionales: {len(tool_calls)} llamadas{_RESET}"
+        )
     else:
         print(f"{_RED}[DEBUG]: compare_node - Contexto suficiente (sin tools){_RESET}")
-    
-    return {
-        "messages": [AIMessage(content=agent_response)]
-    }
+
+    return {"messages": [AIMessage(content=agent_response)]}
 
 
 def rag_node(state: GraphState):
@@ -387,13 +397,13 @@ def rag_node(state: GraphState):
     """
     print(f"{_RED}[DEBUG]: rag_node - Solo retrieval (no genera){_RESET}")
     question = state["question"]
-    
+
     # Búsqueda vectorial
     documentos = recuperar_contexto_dinamico(question, vectorstore)
     contexto_vectorial = formatear_documentos_para_gemini(documentos)
-    
+
     print(f"{_RED}[DEBUG]: rag_node - Recuperados {len(documentos)} documentos{_RESET}")
-    
+
     # Extraer citaciones para el response final
     citations_list = []
     for doc in documentos:
@@ -401,16 +411,12 @@ def rag_node(state: GraphState):
             source=doc.metadata.get("doc_id", "Desconocido"),
             page=doc.metadata.get("page", None),
             chunk_id=doc.metadata.get("chunk_id", "N/A"),
-            snippet=doc.page_content[:250] + "..."
+            snippet=doc.page_content[:250] + "...",
         )
         citations_list.append(cita)
 
     # Solo guarda contexto, NO genera respuesta
-    return {
-        "contexto_legal": contexto_vectorial,
-        "documentos_recuperados": citations_list
-    }
-
+    return {"contexto_legal": contexto_vectorial, "documentos_recuperados": citations_list}
 
 
 def validate_node(state: GraphState):
@@ -425,15 +431,19 @@ def validate_node(state: GraphState):
     answer = str(answer_content) if not isinstance(answer_content, str) else answer_content
     intent = state.get("intent", "generalSearch")
     print(f"{_RED}[DEBUG]: validate_node (ReAct) - intent={intent}{_RESET}")
-    
+
     # Validación básica primero (criterios que no necesitan tools)
     has_content = len(answer.strip()) > 50
     uncertainty_phrases = [
-        "no sé", "no tengo información", "no puedo responder",
-        "no encontré", "fuera de mi conocimiento", "no dispongo"
+        "no sé",
+        "no tengo información",
+        "no puedo responder",
+        "no encontré",
+        "fuera de mi conocimiento",
+        "no dispongo",
     ]
     not_uncertain = not any(phrase in answer.lower() for phrase in uncertainty_phrases)
-    
+
     # Para intents legales, usar el agente ReAct para validación profunda
     if intent in ["domainSearch", "summarize", "compare"]:
         # Construir prompt para el agente validador
@@ -446,38 +456,44 @@ def validate_node(state: GraphState):
             f"3. Verifica si las leyes mencionadas están vigentes usando check_law_vigency\n"
             f"4. Indica si la respuesta es VÁLIDA o NO VÁLIDA y por qué"
         )
-        
+
         try:
-            result = validate_agent.invoke({
-                "messages": [{"role": "user", "content": validation_request}]
-            })
-            
+            result = validate_agent.invoke(
+                {"messages": [{"role": "user", "content": validation_request}]}
+            )
+
             final_message = result["messages"][-1]
-            #validation_result = final_message.content if hasattr(final_message, 'content') else str(final_message)
-            
+            # validation_result = final_message.content if hasattr(final_message, 'content') else str(final_message)
+
             if isinstance(final_message.content, list):
                 validation_result = " ".join(str(b) for b in final_message.content)
             else:
                 validation_result = str(final_message.content)
-            
+
             # Log de tools usadas
-            tool_calls = [msg for msg in result["messages"] if hasattr(msg, 'tool_calls') and msg.tool_calls]
+            tool_calls = [
+                msg for msg in result["messages"] if hasattr(msg, "tool_calls") and msg.tool_calls
+            ]
             if tool_calls:
-                print(f"{_RED}[DEBUG]: validate_node - Validaciones ejecutadas: {len(tool_calls)} tools{_RESET}")
-            
+                print(
+                    f"{_RED}[DEBUG]: validate_node - Validaciones ejecutadas: {len(tool_calls)} tools{_RESET}"
+                )
+
             # Determinar validez basado en respuesta del agente
             validation_lower = validation_result.lower()
             is_valid_from_agent = (
-                "válida" in validation_lower and 
-                "no válida" not in validation_lower and
-                "inválida" not in validation_lower
+                "válida" in validation_lower
+                and "no válida" not in validation_lower
+                and "inválida" not in validation_lower
             )
-            
-            print(f"{_RED}[DEBUG]: validate_node - Resultado agente: {'VÁLIDA' if is_valid_from_agent else 'NO VÁLIDA'}{_RESET}")
-            
+
+            print(
+                f"{_RED}[DEBUG]: validate_node - Resultado agente: {'VÁLIDA' if is_valid_from_agent else 'NO VÁLIDA'}{_RESET}"
+            )
+
             # Combinar criterios básicos con validación del agente
             is_valid = has_content and not_uncertain and is_valid_from_agent
-            
+
         except Exception as e:
             print(f"{_RED}[DEBUG]: validate_node - Error en agente: {e}{_RESET}")
             # Fallback a validación básica
@@ -487,18 +503,21 @@ def validate_node(state: GraphState):
     else:
         # Para generalSearch, validación básica
         is_valid = has_content and not_uncertain
-    
-    print(f"{_RED}[DEBUG]: validate_node - valid={is_valid} "
-            f"(content={has_content}, certain={not_uncertain}){_RESET}")
-    
+
+    print(
+        f"{_RED}[DEBUG]: validate_node - valid={is_valid} "
+        f"(content={has_content}, certain={not_uncertain}){_RESET}"
+    )
+
     return {"is_valid": is_valid}
+
 
 def draft_document_node(state: GraphState):
     print(f"{_RED}[DEBUG]: draft_document_node (ReAct){_RESET}")
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
     historial = _build_conversation_history(state["messages"])
-    
+
     prompt_con_contexto = (
         f"{historial}"
         f"CONTEXTO LEGAL (Para citar leyes en el documento si es necesario):\n{contexto_previo}\n\n"
@@ -512,14 +531,16 @@ def draft_document_node(state: GraphState):
         f"5. TIENES ESTRICTAMENTE PROHIBIDO redactar el documento legal tú mismo en el chat. La ÚNICA forma permitida de entregar un documento es invocando tu herramienta 'generar_documento_legal'.\n"
         f"6. PROHIBIDO USAR CORCHETES: Si para generar el documento necesitas usar espacios en blanco o corchetes como [Tu Nombre] o [Nombre de la Empresa], SIGNIFICA QUE TE FALTAN DATOS.\n"
     )
-    
-    result = draft_document_agent.invoke({
-        "messages": [{"role": "user", "content": prompt_con_contexto}]
-    })
-    
+
+    result = draft_document_agent.invoke(
+        {"messages": [{"role": "user", "content": prompt_con_contexto}]}
+    )
+
     final_message = result["messages"][-1]
-    agent_response = final_message.content if hasattr(final_message, 'content') else str(final_message)
-    
+    agent_response = (
+        final_message.content if hasattr(final_message, "content") else str(final_message)
+    )
+
     return {"messages": [AIMessage(content=agent_response)]}
 
 
@@ -530,6 +551,7 @@ def validate_route(state: GraphState) -> Literal["rag_node", "__end__"]:
 
     print(f"{_RED}[DEBUG]: validate_node — answer is NOT valid, will retry with RAG node{_RESET}")
     return "rag_node"
+
 
 def classify_route(
     state: GraphState,
@@ -556,6 +578,7 @@ def rag_route(
     elif intent == "draftDocument":
         return "draft_document_node"
 
+
 graph = StateGraph(GraphState)
 
 graph.add_node("classifier_node", classifier_node)
@@ -565,7 +588,7 @@ graph.add_node("compare_node", compare_node)
 graph.add_node("general_search_node", general_search_node)
 graph.add_node("validate_node", validate_node)
 graph.add_node("draft_document_node", draft_document_node)
-#graph.add_node("integrate_node", integrate_node)
+# graph.add_node("integrate_node", integrate_node)
 graph.add_node("rag_node", rag_node)
 
 graph.add_edge(START, "classifier_node")
@@ -593,14 +616,15 @@ if __name__ == "__main__":
     print(mermaid_code)
 """
 
+
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
     if conversation_id is None:
         conversation_id = "conversation_1"
-        
+
     config = {"configurable": {"thread_id": conversation_id}}
     # Inyectamos la pregunta en el estado inicial
     initial_messages = {"messages": [HumanMessage(content=question)], "question": question}
-    #Ejecutamos el grafo y capturamos TODO el estado final
+    # Ejecutamos el grafo y capturamos TODO el estado final
     state_output = chat.invoke(initial_messages, config=config)
     # Extraemos la respuesta del LLM (puede venir como string o lista de content blocks)
     raw_content = state_output["messages"][-1].content
@@ -615,13 +639,13 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
     # Extraemos el intent real que calculó el clasificador
     intent_real = state_output.get("intent", "generalSearch")
     # Extraemos los documentos y los convertimos al esquema Citation de FastAPI
-    documentos_recuperados = state_output.get("documentos", [])
+    # documentos_recuperados = state_output.get("documentos", []) TODO: validate if remove
 
     # Para generalSearch no devolvemos citaciones (no usa RAG)
     if intent_real == "generalSearch":
         citations_list = []
     else:
-        #Obtenemos la lista de documentos recuperados por el nodo RAG para incluirlos en las citaciones
+        # Obtenemos la lista de documentos recuperados por el nodo RAG para incluirlos en las citaciones
         citations_list = state_output.get("documentos_recuperados", [])
     request_id = f"req-{uuid.uuid4().hex[:8]}-{conversation_id}"
 
