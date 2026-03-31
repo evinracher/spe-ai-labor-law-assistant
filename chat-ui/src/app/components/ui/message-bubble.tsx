@@ -113,14 +113,12 @@ export default function MessageBubble({ msg }: { msg: Message }) {
         ) : (
           <MessageText text={msg.text} />
         )}
-      </Box>
 
-      {/* Citations Panel - Shows legal sources */}
-      {!isTyping && !isUser && msg.citations && msg.citations.length > 0 && (
-        <Box sx={{ maxWidth: isUser ? "72%" : "80%", width: "100%", mt: 0.75 }}>
-          <CitationsPanel citations={msg.citations} defaultExpanded={true} />
-        </Box>
-      )}
+        {/* Citations - embedded inside the bubble */}
+        {!isTyping && !isUser && msg.citations && msg.citations.length > 0 && (
+          <CitationsPanel citations={msg.citations} />
+        )}
+      </Box>
 
       {!isTyping && (
         <Typography
