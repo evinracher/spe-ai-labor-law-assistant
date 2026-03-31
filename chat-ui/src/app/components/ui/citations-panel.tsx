@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Box, Typography, Collapse, Paper, Chip } from '@mui/material';
-import { ExpandMore, ExpandLess, AutoStories } from '@mui/icons-material';
+import { Box, Typography, Collapse, Chip } from '@mui/material';
+import { ExpandMore, ExpandLess } from '@mui/icons-material';
 import type { Citation } from '../../types';
 import { COLORS } from '../../../styles/colors';
 import { sourceToGithubUrl, sourceToDisplayName } from '../../utils/sourceLinks';
@@ -10,7 +10,7 @@ interface CitationsPanelProps {
   defaultExpanded?: boolean;
 }
 
-export default function CitationsPanel({ citations, defaultExpanded = true }: CitationsPanelProps) {
+export default function CitationsPanel({ citations, defaultExpanded = false }: CitationsPanelProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (!citations || citations.length === 0) {
@@ -18,71 +18,55 @@ export default function CitationsPanel({ citations, defaultExpanded = true }: Ci
   }
 
   return (
-    <Paper
+    <Box
       sx={{
-        mt: 2,
-        mb: 1,
-        background: 'linear-gradient(135deg, #f0f4ff 0%, #fff8f0 100%)',
-        border: `1px solid ${COLORS.dividerOnLight}`,
-        borderRadius: '12px',
-        overflow: 'hidden',
+        mt: 1.5,
+        borderTop: `1px solid ${COLORS.dividerOnLight}`,
+        pt: 1,
       }}
     >
-      {/* Header */}
+      {/* Toggle button */}
       <Box
         onClick={() => setExpanded(!expanded)}
         sx={{
-          px: 2,
-          py: 1.5,
-          display: 'flex',
+          display: 'inline-flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          gap: 0.5,
           cursor: 'pointer',
-          backgroundColor: 'rgba(100, 80, 200, 0.08)',
-          borderBottom: expanded ? `1px solid ${COLORS.dividerOnLight}` : 'none',
-          transition: 'all 0.2s ease',
-          '&:hover': {
-            backgroundColor: 'rgba(100, 80, 200, 0.12)',
-          },
+          color: COLORS.gold,
+          fontSize: '0.8rem',
+          fontWeight: 600,
+          userSelect: 'none',
+          transition: 'opacity 0.15s ease',
+          '&:hover': { opacity: 0.75 },
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <AutoStories sx={{ color: '#6450c8' }} />
-          <Typography sx={{ fontWeight: 600, color: '#6450c8', fontSize: '0.95rem' }}>
-            📜 Fuentes Legales ({citations.length})
-          </Typography>
-        </Box>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <Chip
-            label={`${citations.length} cita${citations.length !== 1 ? 's' : ''}`}
-            size="small"
-            sx={{ backgroundColor: 'rgba(100, 80, 200, 0.15)', color: '#6450c8', fontWeight: 500 }}
-          />
-          {expanded ? <ExpandLess /> : <ExpandMore />}
-        </Box>
+        {expanded ? <ExpandLess sx={{ fontSize: '1rem' }} /> : <ExpandMore sx={{ fontSize: '1rem' }} />}
+        {expanded
+          ? `Ocultar fuentes (${citations.length})`
+          : `Ver fuentes legales (${citations.length})`}
       </Box>
 
-      {/* Expanded Content */}
+      {/* Expanded citations */}
       <Collapse in={expanded} timeout="auto">
-        <Box sx={{ px: 2, py: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
           {citations.map((citation, idx) => (
             <Box
               key={idx}
               sx={{
-                p: 1.5,
-                backgroundColor: '#ffffff',
-                border: `1px solid rgba(100, 80, 200, 0.2)`,
+                p: 1.25,
+                backgroundColor: 'rgba(212,175,55,0.06)',
+                border: `1px solid rgba(212,175,55,0.25)`,
                 borderRadius: '8px',
               }}
             >
-              <Typography sx={{ fontWeight: 700, color: '#6450c8', fontSize: '0.95rem', mb: 0.75 }}>
-                📋{' '}
+              <Typography sx={{ fontWeight: 700, color: COLORS.gold, fontSize: '0.85rem', mb: 0.5 }}>
                 <a
                   href={sourceToGithubUrl(citation.source)}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
-                    color: '#6450c8',
+                    color: COLORS.gold,
                     textDecoration: 'underline',
                     textUnderlineOffset: '3px',
                     wordBreak: 'break-word',
@@ -92,15 +76,31 @@ export default function CitationsPanel({ citations, defaultExpanded = true }: Ci
                 </a>
               </Typography>
               {citation.page && (
-                <Chip label={`Pág. ${citation.page}`} size="small" sx={{ mb: 1, backgroundColor: 'rgba(100, 80, 200, 0.1)', color: '#6450c8' }} />
+                <Chip
+                  label={`Pág. ${citation.page}`}
+                  size="small"
+                  sx={{ mb: 0.75, backgroundColor: 'rgba(212,175,55,0.15)', color: COLORS.gold, fontWeight: 500, fontSize: '0.75rem', height: '20px' }}
+                />
               )}
-              <Box sx={{ p: 1, backgroundColor: 'rgba(100, 80, 200, 0.05)', borderLeft: '3px solid #6450c8', borderRadius: '4px', fontSize: '0.85rem', color: COLORS.textOnLightPrimary, fontStyle: 'italic' }}>
+              <Box
+                sx={{
+                  px: 1,
+                  py: 0.5,
+                  backgroundColor: 'rgba(212,175,55,0.08)',
+                  borderLeft: `2px solid ${COLORS.gold}`,
+                  borderRadius: '0 4px 4px 0',
+                  fontSize: '0.82rem',
+                  color: COLORS.textOnLightSecondary,
+                  fontStyle: 'italic',
+                  lineHeight: 1.5,
+                }}
+              >
                 "{citation.snippet}"
               </Box>
             </Box>
           ))}
         </Box>
       </Collapse>
-    </Paper>
+    </Box>
   );
 }
