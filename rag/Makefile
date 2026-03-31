@@ -1,4 +1,4 @@
-.PHONY: setup lint format test serve ingest
+.PHONY: setup lint format test serve ingest ingest-test
 
 ## Install dependencies and activate git hooks (run once after cloning).
 ## Skips venv creation if .venv already exists.
@@ -12,9 +12,15 @@ setup:
 serve:
 	.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-## Run the document ingestion pipeline
+## Run the full document ingestion pipeline (all PDFs in app/data/)
 ingest:
 	.venv/bin/python -m app.rag.pipelines.run_ingestion
+
+## Run the lightweight test ingestion pipeline
+## Reads only app/data/test/, uses RecursiveCharacterTextSplitter (no Gemini API for chunking),
+## and writes to ./db_chroma_test. Set CHROMA_DIR=./db_chroma_test in .env before serving.
+ingest-test:
+	.venv/bin/python -m app.rag.pipelines.run_ingestion_test
 
 ## Run ruff linter
 lint:

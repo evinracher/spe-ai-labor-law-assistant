@@ -101,13 +101,39 @@ cp .env.example .env
 # The defaults work out-of-the-box with LLM_PROVIDER=mock.
 ```
 
-### 5 - Run Ingestion Pipeline
+### 5 — Run the ingestion pipeline
+
+There are **two ingestion modes**. Both require `GOOGLE_API_KEY` set in `.env` for embedding generation.
+
+#### 5a — Full corpus (production)
+
+Processes all PDFs in `app/data/` using **SemanticChunker** (calls Gemini Embeddings API per chunk boundary). Writes the index to `./db_chroma`. This is slow on large corpora.
+
 ```bash
-#First you must add your google api key into .env file
+make ingest
+# or
 python -m app.rag.pipelines.run_ingestion
-#or
-python app/rag/pipelines/run_ingestion.py
 ```
+
+#### 5b — Test corpus (fast, single document)
+
+Processes only the PDFs in `app/data/test/` using **RecursiveCharacterTextSplitter** — no API calls during chunking, completes in seconds. Writes the index to `./db_chroma_test`.
+
+The folder already contains `CODIGO SUSTANTIVO DEL TRABAJO.pdf` as the baseline test document. Add more files there if needed.
+
+```bash
+make ingest-test
+# or
+python -m app.rag.pipelines.run_ingestion_test
+```
+
+After running the test ingestion, tell the server to use the test database by updating `.env`:
+
+```ini
+CHROMA_DIR=./db_chroma_test
+```
+
+Then start the server normally and the `/chat` endpoint will query the test index.
 
 ### 6 — Run the server
 
@@ -256,7 +282,7 @@ curl -s -X POST http://localhost:8000/chat \
 | `ENV` | `dev` | Runtime environment (`dev` or `prod`) |
 | `DATA_DIR` | `./data` | Corpus source files directory |
 | `VECTOR_DB` | `chroma` | Vector database backend |
-| `CHROMA_DIR` | `./storage/chroma` | ChromaDB persistent directory |
+| `CHROMA_DIR` | `./db_chroma` | ChromaDB persistent directory. Use `./db_chroma_test` for the test index. |
 | `LLM_PROVIDER` | `groq` | `groq` (default) / `gemini` / `local` / `mock` |
 | `GOOGLE_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=gemini` |
 | `GROQ_API_KEY` | *(empty)* | Required for `LLM_PROVIDER=groq` (**required for default setup**) |

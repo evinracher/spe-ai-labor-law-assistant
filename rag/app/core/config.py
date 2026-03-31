@@ -36,9 +36,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ server
     HOST: str = Field(default="0.0.0.0", description="Bind host for uvicorn")
     PORT: int = Field(default=8000, description="Bind port for uvicorn")
-    ENV: Literal["dev", "prod"] = Field(
-        default="dev", description="Runtime environment"
-    )
+    ENV: Literal["dev", "prod"] = Field(default="dev", description="Runtime environment")
 
     # -------------------------------------------------------------------- data
     DATA_DIR: Path = Field(
@@ -52,8 +50,8 @@ class Settings(BaseSettings):
         description="Vector database backend. Currently only 'chroma' is planned.",
     )
     CHROMA_DIR: Path = Field(
-        default=Path("./storage/chroma"),
-        description="Persistent directory for ChromaDB.",
+        default=Path("./db_chroma"),
+        description="Persistent directory for ChromaDB. Set to './db_chroma_test' to use the lightweight test index.",
     )
 
     # -------------------------------------------------------------------- LLM
@@ -81,14 +79,13 @@ class Settings(BaseSettings):
     EMBEDDINGS_MODEL: str = Field(
         default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         description=(
-            "Model name for sentence-transformers embeddings. "
-            "Must support Spanish text."
+            "Model name for sentence-transformers embeddings. " "Must support Spanish text."
         ),
     )
 
     # ----------------------------------------------------------------- derived
     @model_validator(mode="after")
-    def _warn_missing_keys(self) -> "Settings":
+    def _warn_missing_keys(self) -> Settings:
         """Emit a warning (not raise) if LLM_PROVIDER requires a key that is absent."""
         if self.LLM_PROVIDER == "gemini" and not self.GOOGLE_API_KEY:
             print(

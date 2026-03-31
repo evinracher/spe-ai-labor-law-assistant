@@ -4,3 +4,10 @@
 .venv
 .env
 !.env.local
+
+# Context files
+context*
+requirements*
+
+# tests
+rag/db_chroma_test
