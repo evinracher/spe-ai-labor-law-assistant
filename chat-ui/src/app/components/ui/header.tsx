@@ -5,17 +5,10 @@ import {
   Typography,
   IconButton,
   Tooltip,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  Button,
 } from "@mui/material";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import GavelIcon from "@mui/icons-material/Gavel";
-import DescriptionIcon from "@mui/icons-material/Description";
 import { COLORS } from "../../../styles/colors";
-import { useState } from "react";
-import TechnicalSheet from "./technical-sheet";
 
 interface HeaderProps {
   hasMessages: boolean;
@@ -23,11 +16,8 @@ interface HeaderProps {
 }
 
 export default function Header({ hasMessages, onClearChat }: HeaderProps) {
-  const [openTechnicalSheet, setOpenTechnicalSheet] = useState(false);
-
   return (
-    <>
-      <AppBar position="fixed" elevation={0}>
+    <AppBar position="fixed" elevation={0}>
       <Toolbar
         sx={{
           minHeight: { xs: 56, sm: 64 },
@@ -84,21 +74,6 @@ export default function Header({ hasMessages, onClearChat }: HeaderProps) {
 
         {/* Right: Actions */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Tooltip title="Ver ficha técnica" placement="bottom">
-            <IconButton
-              onClick={() => setOpenTechnicalSheet(true)}
-              size="small"
-              sx={{
-                color: COLORS.textOnDarkSecondary,
-                "&:hover": {
-                  color: COLORS.gold,
-                  backgroundColor: "rgba(212,175,55,0.08)",
-                },
-              }}
-            >
-              <DescriptionIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
           {hasMessages && (
             <Tooltip title="Limpiar chat" placement="bottom">
               <IconButton
@@ -119,32 +94,5 @@ export default function Header({ hasMessages, onClearChat }: HeaderProps) {
         </Box>
       </Toolbar>
     </AppBar>
-
-    {/* Technical Sheet Dialog */}
-    <Dialog 
-      open={openTechnicalSheet} 
-      onClose={() => setOpenTechnicalSheet(false)}
-      maxWidth="lg"
-      fullWidth
-      sx={{
-        '& .MuiDialog-paper': {
-          maxHeight: '90vh',
-        }
-      }}
-    >
-      <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        Ficha Técnica
-        <Button 
-          onClick={() => setOpenTechnicalSheet(false)}
-          sx={{ color: COLORS.textOnLightSecondary }}
-        >
-          ✕
-        </Button>
-      </DialogTitle>
-      <DialogContent sx={{ p: 0, overflow: 'hidden' }}>
-        <TechnicalSheet />
-      </DialogContent>
-    </Dialog>
-    </>
   );
 }
