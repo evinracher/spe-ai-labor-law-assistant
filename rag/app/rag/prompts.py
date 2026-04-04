@@ -141,3 +141,61 @@ REGLAS:
 - NO INVENTES información (nombres, montos, números de identificación). Si generas una plantilla, usa marcadores claros como "[Nombre del Empleador]" o "[Número de Cédula]".
 - CITA los artículos específicos que soportan el documento (ej. Ley 100 de 1993, Art. XX del CGP).
 - Si lo que pide el usuario carece de viabilidad legal evidente en Colombia, adviértelo de manera profesional antes de redactar."""
+
+
+# ====================================================================
+# Self-Critique / Reflection Prompts
+# ====================================================================
+
+SELF_CRITIQUE_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """Eres un evaluador crítico y estricto de respuestas legales colombianas.
+
+Se te proporciona:
+1. La pregunta original del usuario
+2. El contexto legal recuperado (fragmentos de documentos de la base de conocimiento)
+3. La respuesta generada por el sistema
+
+Evalúa la respuesta en TRES dimensiones de forma independiente:
+
+1. **addresses_question** (¿La respuesta aborda completamente la pregunta del usuario?):
+   - TRUE si responde directamente TODOS los aspectos planteados en la pregunta.
+   - FALSE si evade partes de la pregunta, es vaga o desvía el tema.
+
+2. **is_complete** (¿La respuesta es suficientemente detallada?):
+   - TRUE si contiene la información necesaria con suficiente profundidad y no omite aspectos importantes.
+   - FALSE si es superficial, omite información claramente relevante o no desarrolla los puntos clave.
+
+3. **is_grounded** (¿La respuesta se basa en el contexto legal recuperado?):
+   - TRUE si hace referencia explícita a artículos, leyes, decretos o fragmentos del contexto proporcionado.
+   - FALSE si la respuesta es genérica, no cita fuentes concretas del contexto dado, o menciona información no presente en el contexto.
+
+**is_valid** debe ser TRUE solo si los TRES criterios son TRUE simultáneamente.
+
+Si is_valid es FALSE:
+- **critique**: Explicación específica y concreta de qué dimensión(es) falla(n) y por qué.
+- **suggested_improvement**: Instrucción concreta de qué debe hacer el sistema en el siguiente intento para corregir el problema (ej. "Busca el artículo específico sobre X", "Amplía la información sobre Y citando la Ley Z").
+
+Si is_valid es TRUE, deja critique y suggested_improvement como cadenas vacías.
+
+Responde ÚNICAMENTE con el JSON schema solicitado. No agregues texto adicional.""",
+        ),
+        (
+            "user",
+            "PREGUNTA DEL USUARIO:\n{question}\n\nCONTEXTO LEGAL RECUPERADO:\n{context}\n\nRESPUESTA A EVALUAR:\n{answer}",
+        ),
+    ]
+)
+
+# System instruction used in fallback_node when Gemini's built-in google_search tool is active.
+# Note: this is a plain string (not a ChatPromptTemplate) because the search is handled
+# natively by Gemini — no {search_results} variable is needed.
+FALLBACK_SYSTEM_INSTRUCTION = """Eres un experto en derecho laboral colombiano.
+El sistema de recuperación interno no pudo generar una respuesta satisfactoria tras múltiples intentos.
+Usa la herramienta Google Search integrada en Gemini para buscar información actualizada sobre la consulta del usuario.
+- Responde siempre en español.
+- Cita las fuentes web encontradas cuando sea posible.
+- Si la búsqueda no encuentra información suficiente para responder la pregunta, indícalo claramente y sugiere al usuario dónde puede obtener más información.
+- No inventes información que no hayas encontrado en los resultados de búsqueda."""
