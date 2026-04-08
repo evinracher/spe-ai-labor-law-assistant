@@ -14,7 +14,7 @@ def recuperar_contexto_dinamico(pregunta: str, vectorstore):
     # 2. Instanciamos Groq (requiere GROQ_API_KEY en tu .env)
     llm_groq = ChatGroq(model="llama-3.1-8b-instant", temperature=0, api_key=settings.GROQ_API_KEY)
 
-    # Forzamos a que la salida sea un objeto estructurado (JSON con la llave 'k')
+    # Forzamos a que la salida sea un objeto estructurado (JSON con la llave 'k_value')
     llm_estructurado = llm_groq.with_structured_output(KSelector)
 
     # 3. Prompt para decidir el K
