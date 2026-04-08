@@ -97,6 +97,28 @@ async def on_startup() -> None:  # (async is intentional)
     app.state.collection = collection
 
     logger.info("ChromaDB ready | collection=%s | docs=%d", collection.name, collection.count())
+
+    # GraphDB / Knowledge Graph connectivity check
+    if settings.GRAPHDB_ENABLED:
+        try:
+            from app.db.graphdb import execute_sparql
+
+            test_result = execute_sparql("SELECT (1 AS ?alive) WHERE {}")
+            if test_result:
+                logger.info(
+                    "GraphDB ready | url=%s | repository=%s",
+                    settings.GRAPHDB_URL,
+                    settings.GRAPHDB_REPOSITORY,
+                )
+            else:
+                logger.warning(
+                    "GraphDB reachable but returned empty test result | url=%s",
+                    settings.GRAPHDB_URL,
+                )
+        except Exception as exc:
+            logger.warning("GraphDB not reachable (KG retrieval will be unavailable): %s", exc)
+    else:
+        logger.info("GraphDB disabled (GRAPHDB_ENABLED=false)")
     # TODO (milestone 3): warm up sentence-transformers model on startup.
 
 

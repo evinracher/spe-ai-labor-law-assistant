@@ -83,6 +83,31 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ------------------------------------------------------------ GraphDB / KG
+    GRAPHDB_URL: str = Field(
+        default="http://localhost:7200",
+        description="Base URL of the GraphDB instance.",
+    )
+    GRAPHDB_REPOSITORY: str = Field(
+        default="labor-law",
+        description="Name of the GraphDB repository that holds the ontology and instances.",
+    )
+    GRAPHDB_USERNAME: str | None = Field(
+        default=None,
+        description="Username for GraphDB basic authentication. Leave empty if auth is disabled.",
+    )
+    GRAPHDB_PASSWORD: str | None = Field(
+        default=None,
+        description="Password for GraphDB basic authentication. Leave empty if auth is disabled.",
+    )
+    GRAPHDB_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Enable knowledge graph retrieval via GraphDB SPARQL endpoint. "
+            "Set to False to disable graph queries and rely only on the vector store."
+        ),
+    )
+
     # -------------------------------------------------------------- retrieval
     RETRIEVAL_STRATEGY: Literal["similarity", "mmr"] = Field(
         default="mmr",

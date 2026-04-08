@@ -61,6 +61,8 @@ from app.rag.tools import (
     get_article_text,
     get_document_metadata,
     list_laws_by_topic,
+    # Knowledge Graph tool
+    query_knowledge_graph,
     # Data Access Tools
     search_by_law_number,
 )
@@ -144,18 +146,21 @@ DOMAIN_SEARCH_TOOLS = [
     get_article_text,
     find_related_jurisprudence,
     evaluar_riesgo_laboral,
+    query_knowledge_graph,
 ]
 
 SUMMARIZE_TOOLS = [
     list_laws_by_topic,
     get_article_text,
     get_document_metadata,
+    query_knowledge_graph,
 ]
 
 COMPARE_TOOLS = [
     list_laws_by_topic,
     search_by_law_number,
     get_article_text,
+    query_knowledge_graph,
 ]
 
 DRAFT_DOCUMENT_TOOLS = [
@@ -237,6 +242,7 @@ class GraphState(TypedDict):
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch", "draftDocument"]
     instruccion_especifica: str  # Instrucción específica del nodo de intención
     contexto_legal: str  # Contexto recuperado de la base vectorial
+    contexto_grafo: str  # Contexto estructurado recuperado del knowledge graph (GraphDB)
     laws_hint: str  # Leyes detectadas por list_laws_by_topic (opcional)
     is_valid: bool
     documentos_recuperados: list  # Documentos para citaciones
@@ -302,23 +308,29 @@ def domain_search_node(state: GraphState):
     print(f"{_RED}[DEBUG]: domain_search_node (ReAct con contexto){_RESET}")
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
+    contexto_grafo = state.get("contexto_grafo", "")
     historial = _build_conversation_history(state["messages"])
     validation_critique = state.get("validation_critique", "")
     retry_count = state.get("retry_count", 0)
 
-    # Prompt que incluye el contexto vectorial y el historial
+    # Prompt que incluye el contexto vectorial, el contexto del grafo y el historial
     prompt_con_contexto = (
         f"{historial}"
         f"CONTEXTO LEGAL DISPONIBLE (de la base de datos vectorial):\n"
         f"{contexto_previo}\n\n"
+    )
+    if contexto_grafo:
+        prompt_con_contexto += f"{contexto_grafo}\n\n"
+    prompt_con_contexto += (
         f"PREGUNTA DEL USUARIO: {question}\n\n"
         f"INSTRUCCIONES:\n"
         f"1. Si el contexto proporcionado es SUFICIENTE para responder, genera la respuesta directamente\n"
         f"2. Si necesitas información MÁS ESPECÍFICA (ley exacta, artículo, jurisprudencia), usa las herramientas\n"
-        f"3. Cita las fuentes exactas (Ley X, Artículo Y)\n"
-        f"4. Responde SIEMPRE en español\n"
-        f"5. Si notas abuso laboral, o riesgos laborales y/o legales, usa la herramienta 'evaluar_riesgo_laboral' e incluye el semáforo al final.\n"
-        f"6. NUNCA redactes documentos legales completos aquí. Solo SUGIERE al usuario: 'Si deseas, puedo ayudarte a redactar un documento legal, solo pídeme que lo genere'."
+        f"3. Si necesitas datos ESTRUCTURADOS sobre empleados, contratos, salarios o empresas, usa la herramienta 'query_knowledge_graph'\n"
+        f"4. Cita las fuentes exactas (Ley X, Artículo Y)\n"
+        f"5. Responde SIEMPRE en español\n"
+        f"6. Si notas abuso laboral, o riesgos laborales y/o legales, usa la herramienta 'evaluar_riesgo_laboral' e incluye el semáforo al final.\n"
+        f"7. NUNCA redactes documentos legales completos aquí. Solo SUGIERE al usuario: 'Si deseas, puedo ayudarte a redactar un documento legal, solo pídeme que lo genere'."
     )
 
     # On retries, append critique so the agent knows exactly what to improve
@@ -362,16 +374,19 @@ def summarize_node(state: GraphState):
     print(f"{_RED}[DEBUG]: summarize_node (ReAct con contexto){_RESET}")
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
+    contexto_grafo = state.get("contexto_grafo", "")
     historial = _build_conversation_history(state["messages"])
     validation_critique = state.get("validation_critique", "")
     retry_count = state.get("retry_count", 0)
 
-    prompt_con_contexto = (
-        f"{historial}"
-        f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
+    prompt_con_contexto = f"{historial}" f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
+    if contexto_grafo:
+        prompt_con_contexto += f"{contexto_grafo}\n\n"
+    prompt_con_contexto += (
         f"SOLICITUD: {question}\n\n"
         f"Genera un resumen estructurado. Si el contexto es suficiente, úsalo directamente. "
-        f"Si necesitas más detalle de artículos específicos, usa las herramientas."
+        f"Si necesitas más detalle de artículos específicos, usa las herramientas. "
+        f"Si necesitas datos estructurados (empleados, contratos, salarios), usa 'query_knowledge_graph'."
     )
 
     if validation_critique and retry_count > 0:
@@ -411,16 +426,19 @@ def compare_node(state: GraphState):
     print(f"{_RED}[DEBUG]: compare_node (ReAct con contexto){_RESET}")
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
+    contexto_grafo = state.get("contexto_grafo", "")
     historial = _build_conversation_history(state["messages"])
     validation_critique = state.get("validation_critique", "")
     retry_count = state.get("retry_count", 0)
 
-    prompt_con_contexto = (
-        f"{historial}"
-        f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
+    prompt_con_contexto = f"{historial}" f"CONTEXTO LEGAL DISPONIBLE:\n{contexto_previo}\n\n"
+    if contexto_grafo:
+        prompt_con_contexto += f"{contexto_grafo}\n\n"
+    prompt_con_contexto += (
         f"SOLICITUD DE COMPARACIÓN: {question}\n\n"
         f"Compara los conceptos solicitados. Si el contexto tiene la información, úsalo. "
-        f"Si necesitas artículos específicos de cada concepto, usa las herramientas."
+        f"Si necesitas artículos específicos de cada concepto, usa las herramientas. "
+        f"Si necesitas datos estructurados para la comparación (ej: contratos, salarios), usa 'query_knowledge_graph'."
     )
 
     if validation_critique and retry_count > 0:
@@ -499,7 +517,24 @@ def rag_node(state: GraphState):
     contexto_vectorial = formatear_documentos_para_gemini(all_docs)
     print(f"{_RED}[DEBUG]: rag_node - Total unique docs: {len(all_docs)}{_RESET}")
 
-    # 3. Build citations
+    # 3. Knowledge Graph retrieval (GraphDB / SPARQL) -----------------------
+    contexto_grafo = ""
+    if settings.GRAPHDB_ENABLED:
+        try:
+            from app.rag.graph_retriever import query_graph
+
+            graph_result = query_graph(effective_question, gemini_LLM)
+            contexto_grafo = graph_result.get("context", "")
+            if contexto_grafo:
+                print(
+                    f"{_RED}[DEBUG]: rag_node - GraphDB returned {len(graph_result.get('results', []))} results{_RESET}"
+                )
+            else:
+                print(f"{_RED}[DEBUG]: rag_node - GraphDB returned no results{_RESET}")
+        except Exception as exc:
+            print(f"{_RED}[DEBUG]: rag_node - GraphDB query failed: {exc}{_RESET}")
+
+    # 4. Build citations
     citations_list = []
     for doc in all_docs:
         cita = Citation(
@@ -510,8 +545,14 @@ def rag_node(state: GraphState):
         )
         citations_list.append(cita)
 
+    # 5. Combine vector + graph context for downstream nodes
+    combined_context = contexto_vectorial
+    if contexto_grafo:
+        combined_context += "\n\n" + contexto_grafo
+
     return {
-        "contexto_legal": contexto_vectorial,
+        "contexto_legal": combined_context,
+        "contexto_grafo": contexto_grafo,
         "documentos_recuperados": citations_list,
         "query_transform": transform_result.model_dump(),
     }

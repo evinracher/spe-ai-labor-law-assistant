@@ -1,4 +1,4 @@
-.PHONY: setup lint format test serve ingest ingest-test
+.PHONY: setup lint format test test-kg test-graphdb serve ingest ingest-test
 
 ## Install dependencies and activate git hooks (run once after cloning).
 ## Skips venv creation if .venv already exists.
@@ -33,3 +33,11 @@ format:
 ## Run test suite
 test:
 	.venv/bin/pytest -v
+
+## Run Knowledge Graph integration tests only
+test-kg:
+	.venv/bin/pytest tests/test_kg.py -v
+
+## Test live GraphDB connection using .env settings
+test-graphdb:
+	.venv/bin/python -m scripts.test_graphdb_connection
