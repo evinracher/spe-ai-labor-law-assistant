@@ -107,6 +107,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --------------------------------------------------------------- evaluation
+    EVAL_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "When True, compute retrieval and generation quality metrics (Precision@k, MRR, "
+            "nDCG@k, Relevance, Faithfulness) via LLM-as-a-judge after each request. "
+            "Adds extra LLM calls per request; keep False in production unless explicitly needed."
+        ),
+    )
+
     # ----------------------------------------------------------------- derived
     @model_validator(mode="after")
     def _warn_missing_keys(self) -> Settings:
