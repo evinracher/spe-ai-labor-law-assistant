@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
+import google.api_core.exceptions
 from google import genai
 from google.genai import types
 from langchain.agents import create_agent
@@ -242,6 +243,7 @@ class GraphState(TypedDict):
     query_transform: dict  # QueryTransformResult serialized for traceability
     retry_count: int  # Counts total generation attempts (incremented by validate_node)
     validation_critique: str  # LLM critique from last validate_node run; fed into next attempt
+    validation_suggested_improvement: str  # Extracted suggested_improvement field; used by rag_node to augment the retrieval query
 
 
 # Usamos gemini para la clasificación de intención porque es más fuerte en tareas de comprensión y clasificación, mientras que groq lo dejamos para manejo de la lógica del grafo.
@@ -462,19 +464,17 @@ def rag_node(state: GraphState):
     """
     print(f"{_RED}[DEBUG]: rag_node - Adaptive retrieval started{_RESET}")
     question = state["question"]
-    validation_critique = state.get("validation_critique", "")
     retry_count = state.get("retry_count", 0)
 
-    # On retries, augment the retrieval query with critique guidance so that
+    # On retries, augment the retrieval query with the stored improvement hint so that
     # the QueryTransformer can select a different/better strategy and the
     # vector search targets the missing information.
     effective_question = question
-    if validation_critique and retry_count > 0:
-        # Append only the suggested_improvement excerpt to keep the query focused
-        improvement_hint = validation_critique.split("Mejora sugerida:")[-1].strip()
+    improvement_hint = state.get("validation_suggested_improvement", "")
+    if improvement_hint and retry_count > 0:
         effective_question = f"{question} {improvement_hint}"
         print(
-            f"{_RED}[DEBUG]: rag_node - Retry {retry_count}: query augmented with critique hint{_RESET}"
+            f"{_RED}[DEBUG]: rag_node - Retry {retry_count}: query augmented with improvement hint{_RESET}"
         )
 
     # 1. Transform the (possibly augmented) query
@@ -558,12 +558,18 @@ def validate_node(state: GraphState):
         new_critique = (
             "" if is_valid else "La respuesta es insuficiente o expresa demasiada incertidumbre."
         )
+        new_improvement = (
+            ""
+            if is_valid
+            else "Ofrece una respuesta más completa y directa a la pregunta del usuario."
+        )
 
         print(f"{_RED}[DEBUG]: validate_node - heuristic valid={is_valid}{_RESET}")
         return {
             "is_valid": is_valid,
             "retry_count": current_retry_count + 1,
             "validation_critique": new_critique,
+            "validation_suggested_improvement": new_improvement,
         }
 
     # ------------------------------------------------------------------ #
@@ -583,8 +589,9 @@ def validate_node(state: GraphState):
 
         if is_valid:
             new_critique = ""
+            new_improvement = ""
         else:
-            # Build a structured critique string that rag_node and specialist nodes can use
+            # Build a structured critique string for specialist nodes
             failures = []
             if not critique_result.addresses_question:
                 failures.append("❌ No aborda completamente la pregunta")
@@ -598,6 +605,8 @@ def validate_node(state: GraphState):
                 f"Detalle: {critique_result.critique}\n"
                 f"Mejora sugerida: {critique_result.suggested_improvement}"
             )
+            # Store the improvement hint as a dedicated field so rag_node can use it directly
+            new_improvement = critique_result.suggested_improvement
 
         print(
             f"{_RED}[DEBUG]: validate_node - LLM self-critique: "
@@ -621,6 +630,11 @@ def validate_node(state: GraphState):
             if is_valid
             else "La respuesta carece de referencias legales específicas o es demasiado breve."
         )
+        new_improvement = (
+            ""
+            if is_valid
+            else "Incluye citas legales concretas (artículo, ley o decreto) que respalden la respuesta."
+        )
 
     print(
         f"{_RED}[DEBUG]: validate_node - final valid={is_valid}, "
@@ -630,6 +644,7 @@ def validate_node(state: GraphState):
         "is_valid": is_valid,
         "retry_count": current_retry_count + 1,
         "validation_critique": new_critique,
+        "validation_suggested_improvement": new_improvement,
     }
 
 
@@ -828,6 +843,28 @@ if __name__ == "__main__":
 """
 
 
+def _is_model_unavailable_error(exc: Exception) -> bool:
+    """Return True if *exc* indicates the AI model is temporarily unavailable (503/429/UNAVAILABLE)."""
+    if isinstance(
+        exc,
+        google.api_core.exceptions.ServiceUnavailable
+        | google.api_core.exceptions.ResourceExhausted,
+    ):
+        return True
+    msg = str(exc).upper()
+    return any(
+        token in msg
+        for token in (
+            "503",
+            "UNAVAILABLE",
+            "SERVICE_UNAVAILABLE",
+            "RESOURCE_EXHAUSTED",
+            "429",
+            "TOO MANY REQUESTS",
+        )
+    )
+
+
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
     if conversation_id is None:
         conversation_id = "conversation_1"
@@ -836,7 +873,29 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
     # Inyectamos la pregunta en el estado inicial
     initial_messages = {"messages": [HumanMessage(content=question)], "question": question}
     # Ejecutamos el grafo y capturamos TODO el estado final
-    state_output = chat.invoke(initial_messages, config=config)
+    try:
+        state_output = chat.invoke(initial_messages, config=config)
+    except Exception as exc:
+        if _is_model_unavailable_error(exc):
+            print(f"{_RED}[DEBUG]: ask_chat - Model unavailable: {exc}{_RESET}")
+            request_id = f"req-{uuid.uuid4().hex[:8]}-{conversation_id}"
+            return ChatResponse(
+                ok=False,
+                request_id=request_id,
+                answer=(
+                    "Lo sentimos, el modelo de IA no está disponible en este momento debido a alta "
+                    "demanda o a una interrupción temporal del servicio. "
+                    "Por favor, inténtalo de nuevo en unos minutos."
+                ),
+                citations=[],
+                trace=Trace(
+                    intent=None,
+                    top_k=0,
+                    vector_db=settings.VECTOR_DB,
+                    llm_provider=settings.LLM_PROVIDER,
+                ),
+            )
+        raise
     # Extraemos la respuesta del LLM (puede venir como string o lista de content blocks)
     raw_content = state_output["messages"][-1].content
     if isinstance(raw_content, list):
