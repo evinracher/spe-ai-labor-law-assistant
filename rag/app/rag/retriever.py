@@ -35,14 +35,15 @@ def recuperar_contexto_dinamico(pregunta: str, vectorstore):
     )
 
     # 5. Hacemos la búsqueda real en la base vectorial.
-    # MMR (Maximal Marginal Relevance) re-ranks a larger candidate pool (fetch_k) so that
+    # MMR (Maximal Marginal Relevance) re-ranks a configured candidate pool (fetch_k) so that
     # the final k documents are both relevant to the query AND diverse among themselves,
     # avoiding near-duplicate passages in the retrieved context.
     if settings.RETRIEVAL_STRATEGY == "mmr":
+        k_mmr = min(k_dinamico, settings.MMR_FETCH_K)
         documentos_recuperados = vectorstore.max_marginal_relevance_search(
             pregunta,
-            k=k_dinamico,
-            fetch_k=max(k_dinamico * 4, settings.MMR_FETCH_K),
+            k=k_mmr,
+            fetch_k=settings.MMR_FETCH_K,
             lambda_mult=settings.MMR_LAMBDA,
         )
     else:
