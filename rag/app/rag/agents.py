@@ -39,7 +39,7 @@ from langgraph.graph import END, START, StateGraph, add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-from app.api.schemas import ChatResponse, Citation, QueryTransformTrace, Trace
+from app.api.schemas import ChatResponse, Citation, EvalMetrics, QueryTransformTrace, Trace
 from app.core.config import settings
 from app.rag.prompts import (
     CLASSIFIER_PROMPT,
@@ -922,6 +922,48 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
     qt_data = state_output.get("query_transform")
     qt_trace = QueryTransformTrace(**qt_data) if qt_data else None
 
+    # ------------------------------------------------------------------ eval metrics
+    eval_metrics: EvalMetrics | None = None
+    if settings.EVAL_ENABLED:
+        from app.rag.metrics import compute_generation_metrics, compute_retrieval_metrics
+
+        ret_metrics = None
+        # Retrieval metrics only make sense for RAG intents that produced citations.
+        if intent_real != "generalSearch" and citations_list:
+            retrieval_snippets = [
+                (cit.chunk_id or f"chunk_{i}", cit.snippet) for i, cit in enumerate(citations_list)
+            ]
+            try:
+                ret_metrics = compute_retrieval_metrics(
+                    query=question,
+                    retrieved_snippets=retrieval_snippets,
+                    llm=gemini_LLM,
+                )
+            except Exception as exc:
+                print(f"{_RED}[DEBUG]: eval - retrieval metrics failed: {exc}{_RESET}")
+
+        gen_metrics = None
+        context_for_eval = state_output.get("contexto_legal", "")
+        try:
+            gen_metrics = compute_generation_metrics(
+                question=question,
+                answer=response,
+                context=context_for_eval,
+                llm=gemini_LLM,
+            )
+        except Exception as exc:
+            print(f"{_RED}[DEBUG]: eval - generation metrics failed: {exc}{_RESET}")
+
+        eval_metrics = EvalMetrics(retrieval=ret_metrics, generation=gen_metrics)
+        print(
+            f"{_RED}[DEBUG]: eval - "
+            f"P@k={ret_metrics.precision_at_k if ret_metrics else 'n/a'}, "
+            f"MRR={ret_metrics.mrr if ret_metrics else 'n/a'}, "
+            f"nDCG={ret_metrics.ndcg_at_k if ret_metrics else 'n/a'}, "
+            f"relevance={gen_metrics.relevance.score if gen_metrics else 'n/a'}, "
+            f"faithfulness={gen_metrics.faithfulness.score if gen_metrics else 'n/a'}{_RESET}"
+        )
+
     return ChatResponse(
         ok=True,
         request_id=request_id,
@@ -934,4 +976,5 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
             llm_provider=settings.LLM_PROVIDER,
             query_transform=qt_trace,
         ),
+        eval=eval_metrics,
     )

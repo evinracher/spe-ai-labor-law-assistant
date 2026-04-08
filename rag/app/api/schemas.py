@@ -128,6 +128,74 @@ class Trace(BaseModel):
     )
 
 
+# =========================================================== Evaluation metrics
+
+
+class ChunkJudgment(BaseModel):
+    """LLM-as-judge verdict for a single retrieved chunk."""
+
+    chunk_id: str = Field(..., description="Chunk identifier from the vector store.")
+    relevant: bool = Field(
+        ..., description="True if the LLM judge considers this chunk relevant to the query."
+    )
+    relevance_score: float = Field(
+        ...,
+        description="Graded relevance score: 0.0 (not relevant) to 1.0 (highly relevant).",
+        ge=0.0,
+        le=1.0,
+    )
+    justification: str = Field(..., description="One-sentence justification from the judge.")
+
+
+class RetrievalMetrics(BaseModel):
+    """Retrieval quality metrics computed via LLM-as-a-judge chunk relevance."""
+
+    precision_at_k: float = Field(..., description="Fraction of retrieved chunks judged relevant.")
+    mrr: float = Field(
+        ..., description="Mean Reciprocal Rank: 1 / rank of the first relevant chunk (0 if none)."
+    )
+    ndcg_at_k: float = Field(..., description="Normalized Discounted Cumulative Gain at k.")
+    # TODO: Recall@k requires knowing the total number of relevant documents in the full corpus
+    # for each query. This cannot be computed without manual relevance annotations over the
+    # entire vector store. Implement when a labeled evaluation set is available.
+    k: int = Field(..., description="Number of chunks retrieved (k).")
+    chunk_judgments: list[ChunkJudgment] = Field(
+        default_factory=list,
+        description="Per-chunk LLM-judge verdicts in retrieval order.",
+    )
+
+
+class GenerationJudgment(BaseModel):
+    """LLM-as-judge verdict for a single generation metric."""
+
+    score: float = Field(
+        ..., description="Quality score from 0.0 (worst) to 1.0 (best).", ge=0.0, le=1.0
+    )
+    justification: str = Field(..., description="One-sentence justification from the judge.")
+
+
+class GenerationMetrics(BaseModel):
+    """Generation quality metrics computed via LLM-as-a-judge."""
+
+    relevance: GenerationJudgment = Field(
+        ..., description="Does the answer address the user's question?"
+    )
+    faithfulness: GenerationJudgment = Field(
+        ..., description="Are all answer claims supported by the retrieved context?"
+    )
+
+
+class EvalMetrics(BaseModel):
+    """Combined retrieval + generation evaluation metrics for a single query-answer pair."""
+
+    retrieval: RetrievalMetrics | None = Field(
+        default=None, description="Retrieval quality metrics (None for non-RAG intents)."
+    )
+    generation: GenerationMetrics | None = Field(
+        default=None, description="Generation quality metrics."
+    )
+
+
 class ToolTraceStep(BaseModel):
     """Execution trace for a single Tool invocation."""
 
@@ -198,4 +266,11 @@ class ChatResponse(BaseModel):
     metadata: dict | None = Field(
         default=None,
         description="Additional metadata including tool traces and validation scores.",
+    )
+    eval: EvalMetrics | None = Field(
+        default=None,
+        description=(
+            "Evaluation metrics (Precision@k, MRR, nDCG, Relevance, Faithfulness) computed via "
+            "LLM-as-a-judge. Only present when EVAL_ENABLED=true in settings."
+        ),
     )
