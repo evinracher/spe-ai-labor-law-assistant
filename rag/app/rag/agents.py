@@ -49,13 +49,10 @@ from app.rag.prompts import (
     GENERAL_SYSTEM_PROMPT,
     SELF_CRITIQUE_PROMPT,
     SUMMARIZE_PROMPT,
-    VALIDATE_PROMPT,
 )
 from app.rag.query_transformer import QueryTransformer
 from app.rag.retriever import formatear_documentos_para_gemini, recuperar_contexto_dinamico
 from app.rag.tools import (
-    # Tools registry
-    check_law_vigency,
     evaluar_riesgo_laboral,
     find_related_jurisprudence,
     # Tool de generación de documentos legales
@@ -65,8 +62,6 @@ from app.rag.tools import (
     list_laws_by_topic,
     # Data Access Tools
     search_by_law_number,
-    # Validation Tools
-    verify_citation_exists,
 )
 
 #
@@ -162,11 +157,6 @@ COMPARE_TOOLS = [
     get_article_text,
 ]
 
-VALIDATE_TOOLS = [
-    verify_citation_exists,
-    check_law_vigency,
-]
-
 DRAFT_DOCUMENT_TOOLS = [
     generar_documento_legal,
 ]
@@ -194,11 +184,6 @@ compare_agent = create_agent(
     model=gemini_LLM, tools=COMPARE_TOOLS, system_prompt=COMPARE_PROMPT, name="compare_agent"
 )
 
-# Agente para validación
-validate_agent = create_agent(
-    model=gemini_LLM, tools=VALIDATE_TOOLS, system_prompt=VALIDATE_PROMPT, name="validate_agent"
-)
-
 # Agente redactor de documentos legales
 draft_document_agent = create_agent(
     model=gemini_LLM,
@@ -208,7 +193,7 @@ draft_document_agent = create_agent(
 )
 
 
-print("✅ ReAct agents created: domain_search, summarize, compare, validate, draft_document")
+print("✅ ReAct agents created: domain_search, summarize, compare, draft_document")
 
 
 # Maximum total generation attempts (initial + retries) before activating fallback
@@ -680,12 +665,15 @@ def draft_document_node(state: GraphState):
     return {"messages": [AIMessage(content=agent_response)]}
 
 
-def validate_route(state: GraphState) -> Literal["rag_node", "fallback_node", "__end__"]:
+def validate_route(
+    state: GraphState,
+) -> Literal["rag_node", "general_search_node", "fallback_node", "__end__"]:
     """
     Routes after validate_node:
-      - END           → answer passed self-critique
-      - rag_node      → answer failed but retry_count < MAX_ATTEMPTS
-      - fallback_node → answer failed and MAX_ATTEMPTS reached; switch to Google Search
+      - END                 → answer passed self-critique
+      - rag_node            → legal intent failed but retry_count < MAX_ATTEMPTS
+      - general_search_node → generalSearch intent failed but retry_count < MAX_ATTEMPTS
+      - fallback_node       → any intent failed and MAX_ATTEMPTS reached; switch to Google Search
     """
     if state["is_valid"]:
         print(f"{_RED}[DEBUG]: validate_route — answer is valid → END{_RESET}")
@@ -697,6 +685,13 @@ def validate_route(state: GraphState) -> Literal["rag_node", "fallback_node", "_
             f"{_RED}[DEBUG]: validate_route — {retry_count} attempts exhausted → fallback_node{_RESET}"
         )
         return "fallback_node"
+
+    intent = state.get("intent", "generalSearch")
+    if intent == "generalSearch":
+        print(
+            f"{_RED}[DEBUG]: validate_route — attempt {retry_count}/{MAX_ATTEMPTS} failed (generalSearch) → general_search_node{_RESET}"
+        )
+        return "general_search_node"
 
     print(
         f"{_RED}[DEBUG]: validate_route — attempt {retry_count}/{MAX_ATTEMPTS} failed → rag_node (retry){_RESET}"
@@ -742,6 +737,22 @@ def fallback_node(state: GraphState):
     question = state["question"]
     print(f"{_RED}[DEBUG]: fallback_node — activating Gemini google_search grounding{_RESET}")
 
+    if not settings.GOOGLE_API_KEY:
+        print(f"{_RED}[DEBUG]: fallback_node — GOOGLE_API_KEY not set, skipping search{_RESET}")
+        return {
+            "messages": [
+                AIMessage(
+                    content=(
+                        "Lo siento, el sistema interno no encontró una respuesta satisfactoria "
+                        f"tras {MAX_ATTEMPTS} intentos y el mecanismo de búsqueda web no está "
+                        "disponible porque la clave de API de Google no está configurada. "
+                        "Por favor consulta directamente el Código Sustantivo del Trabajo "
+                        "o un abogado laboral especializado."
+                    )
+                )
+            ]
+        }
+
     try:
         # Use the google-genai client with the built-in google_search tool.
         # No additional API key is needed beyond the existing GOOGLE_API_KEY.
@@ -771,7 +782,6 @@ def fallback_node(state: GraphState):
             "Lo siento, no pude encontrar información suficiente sobre tu consulta en la base de "
             "conocimiento interna ni mediante búsqueda web. Te recomiendo consultar directamente el "
             "Código Sustantivo del Trabajo o un abogado laboral especializado.\n\n"
-            f"*Detalle del error: {e}*"
         )
 
     print(f"{_RED}[DEBUG]: fallback_node — answer ready{_RESET}")
