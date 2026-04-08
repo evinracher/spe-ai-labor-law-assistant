@@ -83,6 +83,30 @@ class Settings(BaseSettings):
         ),
     )
 
+    # -------------------------------------------------------------- retrieval
+    RETRIEVAL_STRATEGY: Literal["similarity", "mmr"] = Field(
+        default="mmr",
+        description=(
+            "Retrieval strategy: 'similarity' for plain cosine similarity, "
+            "'mmr' for Maximal Marginal Relevance (balances relevance + diversity)."
+        ),
+    )
+    MMR_FETCH_K: int = Field(
+        default=10,
+        description=(
+            "Candidate pool size for MMR re-ranking. "
+            "The retriever first fetches this many documents, then re-ranks them with MMR to return k results. "
+            "Higher values improve diversity coverage at a small latency cost."
+        ),
+    )
+    MMR_LAMBDA: float = Field(
+        default=0.5,
+        description=(
+            "MMR lambda multiplier (0.0 = maximum diversity, 1.0 = maximum relevance). "
+            "Default 0.5 balances both objectives."
+        ),
+    )
+
     # ----------------------------------------------------------------- derived
     @model_validator(mode="after")
     def _warn_missing_keys(self) -> Settings:
