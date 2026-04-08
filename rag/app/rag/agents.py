@@ -812,7 +812,6 @@ graph.add_node("compare_node", compare_node)
 graph.add_node("general_search_node", general_search_node)
 graph.add_node("validate_node", validate_node)
 graph.add_node("draft_document_node", draft_document_node)
-# graph.add_node("integrate_node", integrate_node)
 graph.add_node("rag_node", rag_node)
 graph.add_node("fallback_node", fallback_node)
 
