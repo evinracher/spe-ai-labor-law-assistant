@@ -1,0 +1,526 @@
+@prefix : <http://example.org/contratos#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:OntologiaContratos a owl:Ontology ;
+    rdfs:label "Ontología de contratos, empleo y prestación de servicios"@es .
+
+#################################################################
+# Clases
+#################################################################
+
+:Persona a owl:Class ;
+    rdfs:label "Persona natural o jurídica"@es .
+
+:Contratante a owl:Class ;
+    rdfs:subClassOf :Persona ;
+    rdfs:label "Contratante"@es .
+
+:Contratista a owl:Class ;
+    rdfs:subClassOf :Persona ,
+        [ a owl:Restriction ;
+          owl:onProperty :tieneContrato ;
+          owl:someValuesFrom :ContratoPrestacionServicios
+        ] ;
+    rdfs:label "Contratista"@es .
+
+:Empleador a owl:Class ;
+    rdfs:subClassOf :Contratante ,
+        [ a owl:Restriction ;
+          owl:onProperty :empleaA ;
+          owl:allValuesFrom :Empleado
+        ] ;
+    rdfs:label "Empleador"@es .
+
+:Empleado a owl:Class ;
+    rdfs:subClassOf :Persona ,
+        [ a owl:Restriction ;
+          owl:onProperty :tieneContrato ;
+          owl:someValuesFrom :ContratoLaboral
+        ] ;
+    rdfs:label "Empleado"@es .
+
+:Contrato a owl:Class ;
+    rdfs:label "Contrato"@es .
+
+:ContratoLaboral a owl:Class ;
+    rdfs:subClassOf :Contrato ,
+        [ a owl:Restriction ;
+          owl:onProperty :contratoAsociaEmpleado ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger
+        ],
+        [ a owl:Restriction ;
+          owl:onProperty :contratoAsociaEmpleador ;
+          owl:cardinality "1"^^xsd:nonNegativeInteger
+        ] ;
+    rdfs:label "Contrato laboral"@es .
+
+:ContratoPrestacionServicios a owl:Class ;
+    rdfs:subClassOf :Contrato ,
+        [ a owl:Restriction ;
+          owl:onProperty :contratoAsociaContratista ;
+          owl:allValuesFrom :Contratista
+        ] ;
+    rdfs:label "Contrato de prestación de servicios"@es .
+
+:Puesto a owl:Class ;
+    rdfs:label "Puesto"@es .
+
+:Salario a owl:Class ;
+    rdfs:label "Salario"@es .
+
+:Departamento a owl:Class ;
+    rdfs:label "Departamento"@es .
+
+:JornadaLaboral a owl:Class ;
+    rdfs:label "Jornada laboral"@es .
+
+:Beneficio a owl:Class ;
+    rdfs:label "Beneficio"@es .
+
+:TrabajadorVinculado a owl:Class ;
+    owl:equivalentClass [
+        a owl:Class ;
+        owl:intersectionOf (
+            :Empleado
+            [ a owl:Restriction ;
+              owl:onProperty :tieneContrato ;
+              owl:someValuesFrom :ContratoLaboral
+            ]
+        )
+    ] ;
+    rdfs:label "Trabajador vinculado"@es .
+
+#################################################################
+# Clases disjuntas
+#################################################################
+
+:Empleado owl:disjointWith :Empleador .
+:ContratoLaboral owl:disjointWith :ContratoPrestacionServicios .
+:Contratista owl:disjointWith :Empleado .
+
+#################################################################
+# Propiedades de objeto
+#################################################################
+
+:tieneContrato a owl:ObjectProperty ;
+    rdfs:domain :Persona ;
+    rdfs:range :Contrato ;
+    rdfs:label "tiene contrato"@es .
+
+:contrataA a owl:ObjectProperty ;
+    rdfs:domain :Contratante ;
+    rdfs:range :Persona ;
+    owl:inverseOf :esContratadoPor ;
+    rdfs:label "contrata a"@es .
+
+:esContratadoPor a owl:ObjectProperty ;
+    rdfs:domain :Persona ;
+    rdfs:range :Contratante ;
+    rdfs:label "es contratado por"@es .
+
+:empleaA a owl:ObjectProperty ;
+    rdfs:subPropertyOf :contrataA ;
+    rdfs:domain :Empleador ;
+    rdfs:range :Empleado ;
+    owl:inverseOf :esEmpleadoDe ;
+    rdfs:label "emplea a"@es .
+
+:esEmpleadoDe a owl:ObjectProperty ;
+    rdfs:subPropertyOf :esContratadoPor ;
+    rdfs:domain :Empleado ;
+    rdfs:range :Empleador ;
+    rdfs:label "es empleado de"@es .
+
+:asignaPuesto a owl:ObjectProperty ;
+    rdfs:domain :Empleador ;
+    rdfs:range :Puesto ;
+    rdfs:label "asigna puesto"@es .
+
+:ocupaPuesto a owl:ObjectProperty ;
+    rdfs:domain :Empleado ;
+    rdfs:range :Puesto ;
+    rdfs:label "ocupa puesto"@es .
+
+:perteneceADepartamento a owl:ObjectProperty ;
+    rdfs:domain :Empleado ;
+    rdfs:range :Departamento ;
+    rdfs:label "pertenece a departamento"@es .
+
+:tieneSalario a owl:ObjectProperty ;
+    rdfs:domain :Empleado ;
+    rdfs:range :Salario ;
+    rdfs:label "tiene salario"@es .
+
+:tieneJornada a owl:ObjectProperty ;
+    rdfs:domain :Empleado ;
+    rdfs:range :JornadaLaboral ;
+    rdfs:label "tiene jornada"@es .
+
+:ofreceBeneficio a owl:ObjectProperty ;
+    rdfs:domain :Empleador ;
+    rdfs:range :Beneficio ;
+    rdfs:label "ofrece beneficio"@es .
+
+:recibeBeneficio a owl:ObjectProperty ;
+    rdfs:domain :Empleado ;
+    rdfs:range :Beneficio ;
+    rdfs:label "recibe beneficio"@es .
+
+:contratoAsociaEmpleado a owl:ObjectProperty ;
+    rdfs:domain :ContratoLaboral ;
+    rdfs:range :Empleado ;
+    rdfs:label "contrato asocia empleado"@es .
+
+:contratoAsociaEmpleador a owl:ObjectProperty ;
+    rdfs:domain :ContratoLaboral ;
+    rdfs:range :Empleador ;
+    rdfs:label "contrato asocia empleador"@es .
+
+:contratoAsociaContratista a owl:ObjectProperty ;
+    rdfs:domain :ContratoPrestacionServicios ;
+    rdfs:range :Contratista ;
+    rdfs:label "contrato asocia contratista"@es .
+
+:contratoAsociaContratante a owl:ObjectProperty ;
+    rdfs:domain :ContratoPrestacionServicios ;
+    rdfs:range :Contratante ;
+    rdfs:label "contrato asocia contratante"@es .
+
+#################################################################
+# Propiedades de datos
+#################################################################
+
+:nombreCompleto a owl:DatatypeProperty ;
+    rdfs:domain :Persona ;
+    rdfs:range xsd:string ;
+    rdfs:label "nombre completo"@es .
+
+:identificacion a owl:DatatypeProperty ;
+    rdfs:domain :Persona ;
+    rdfs:range xsd:string ;
+    rdfs:label "identificación"@es .
+
+:fechaInicio a owl:DatatypeProperty ;
+    rdfs:domain :Contrato ;
+    rdfs:range xsd:date ;
+    rdfs:label "fecha de inicio"@es .
+
+:fechaFin a owl:DatatypeProperty ;
+    rdfs:domain :Contrato ;
+    rdfs:range xsd:date ;
+    rdfs:label "fecha de fin"@es .
+
+:duracionMeses a owl:DatatypeProperty ;
+    rdfs:domain :Contrato ;
+    rdfs:range xsd:integer ;
+    rdfs:label "duración en meses"@es .
+
+:activo a owl:DatatypeProperty ;
+    rdfs:domain :Contrato ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "activo"@es .
+
+:salarioBase a owl:DatatypeProperty ;
+    rdfs:domain :Salario ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "salario base"@es .
+
+:moneda a owl:DatatypeProperty ;
+    rdfs:domain :Salario ;
+    rdfs:range xsd:string ;
+    rdfs:label "moneda"@es .
+
+:tituloPuesto a owl:DatatypeProperty ;
+    rdfs:domain :Puesto ;
+    rdfs:range xsd:string ;
+    rdfs:label "título del puesto"@es .
+
+:horasSemanales a owl:DatatypeProperty ;
+    rdfs:domain :JornadaLaboral ;
+    rdfs:range xsd:integer ;
+    rdfs:label "horas semanales"@es .
+
+:tipoBeneficio a owl:DatatypeProperty ;
+    rdfs:domain :Beneficio ;
+    rdfs:range xsd:string ;
+    rdfs:label "tipo de beneficio"@es .
+
+:nombreDepartamento a owl:DatatypeProperty ;
+    rdfs:domain :Departamento ;
+    rdfs:range xsd:string ;
+    rdfs:label "nombre del departamento"@es .
+
+#################################################################
+# Individuos - Empleadores / Contratantes / Personas
+#################################################################
+
+:EmpresaAlfa a :Persona, :Contratante, :Empleador ;
+    :nombreCompleto "Empresa Alfa S.A.S." ;
+    :identificacion "NIT-900100100-1" ;
+    :ofreceBeneficio :BeneficioSaludPlus, :BeneficioBonoAlimentacion .
+
+:EmpresaBeta a :Persona, :Contratante, :Empleador ;
+    :nombreCompleto "Empresa Beta S.A.S." ;
+    :identificacion "NIT-900200200-2" ;
+    :ofreceBeneficio :BeneficioCapacitacion, :BeneficioSeguroVida .
+
+:EmpresaGamma a :Persona, :Contratante, :Empleador ;
+    :nombreCompleto "Empresa Gamma S.A.S." ;
+    :identificacion "NIT-900300300-3" ;
+    :ofreceBeneficio :BeneficioSaludPlus, :BeneficioSeguroVida .
+
+:EmpresaDelta a :Persona, :Contratante, :Empleador ;
+    :nombreCompleto "Empresa Delta S.A.S." ;
+    :identificacion "NIT-900400400-4" ;
+    :ofreceBeneficio :BeneficioBonoAlimentacion, :BeneficioCapacitacion .
+
+#################################################################
+# Individuos - Empleados / Personas / Trabajadores vinculados
+#################################################################
+
+:AnaLopez a :Persona, :Empleado ;
+    :nombreCompleto "Ana López" ;
+    :identificacion "CC-1001" ;
+    :tieneContrato :ContratoLab001 ;
+    :tieneSalario :Salario001 ;
+    :ocupaPuesto :PuestoDesarrolladorSenior ;
+    :perteneceADepartamento :DepartamentoTecnologia ;
+    :tieneJornada :JornadaDiurna ;
+    :recibeBeneficio :BeneficioSaludPlus, :BeneficioBonoAlimentacion ;
+    :esEmpleadoDe :EmpresaAlfa .
+
+:BrunoDiaz a :Persona, :Empleado ;
+    :nombreCompleto "Bruno Díaz" ;
+    :identificacion "CC-1002" ;
+    :tieneContrato :ContratoLab002 ;
+    :tieneSalario :Salario002 ;
+    :ocupaPuesto :PuestoAnalistaNomina ;
+    :perteneceADepartamento :DepartamentoTalentoHumano ;
+    :tieneJornada :JornadaMixta ;
+    :recibeBeneficio :BeneficioCapacitacion ;
+    :esEmpleadoDe :EmpresaBeta .
+
+:CarlaRuiz a :Persona, :Empleado ;
+    :nombreCompleto "Carla Ruiz" ;
+    :identificacion "CC-1003" ;
+    :tieneContrato :ContratoLab003 ;
+    :tieneSalario :Salario003 ;
+    :ocupaPuesto :PuestoDisenadoraUX ;
+    :perteneceADepartamento :DepartamentoDiseno ;
+    :tieneJornada :JornadaRemota ;
+    :recibeBeneficio :BeneficioSeguroVida, :BeneficioCapacitacion ;
+    :esEmpleadoDe :EmpresaGamma .
+
+:DiegoPerez a :Persona, :Empleado ;
+    :nombreCompleto "Diego Pérez" ;
+    :identificacion "CC-1004" ;
+    :tieneContrato :ContratoLab004 ;
+    :tieneSalario :Salario004 ;
+    :ocupaPuesto :PuestoCoordinadorTI ;
+    :perteneceADepartamento :DepartamentoOperaciones ;
+    :tieneJornada :JornadaFlexible ;
+    :recibeBeneficio :BeneficioSaludPlus, :BeneficioSeguroVida ;
+    :esEmpleadoDe :EmpresaDelta .
+
+#################################################################
+# Individuos - Contratistas / Personas
+#################################################################
+
+:SofiaMoreno a :Persona, :Contratista ;
+    :nombreCompleto "Sofía Moreno" ;
+    :identificacion "CC-2001" ;
+    :tieneContrato :ContratoPS001 .
+
+:TomasVega a :Persona, :Contratista ;
+    :nombreCompleto "Tomás Vega" ;
+    :identificacion "CC-2002" ;
+    :tieneContrato :ContratoPS002 .
+
+:ValeriaCruz a :Persona, :Contratista ;
+    :nombreCompleto "Valeria Cruz" ;
+    :identificacion "CC-2003" ;
+    :tieneContrato :ContratoPS003 .
+
+:WalterNino a :Persona, :Contratista ;
+    :nombreCompleto "Walter Niño" ;
+    :identificacion "CC-2004" ;
+    :tieneContrato :ContratoPS004 .
+
+#################################################################
+# Individuos - Contratos laborales
+#################################################################
+
+:ContratoLab001 a :Contrato, :ContratoLaboral ;
+    :fechaInicio "2025-01-15"^^xsd:date ;
+    :fechaFin "2026-01-14"^^xsd:date ;
+    :duracionMeses "12"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaEmpleado :AnaLopez ;
+    :contratoAsociaEmpleador :EmpresaAlfa .
+
+:ContratoLab002 a :Contrato, :ContratoLaboral ;
+    :fechaInicio "2025-02-01"^^xsd:date ;
+    :fechaFin "2026-01-31"^^xsd:date ;
+    :duracionMeses "12"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaEmpleado :BrunoDiaz ;
+    :contratoAsociaEmpleador :EmpresaBeta .
+
+:ContratoLab003 a :Contrato, :ContratoLaboral ;
+    :fechaInicio "2025-03-01"^^xsd:date ;
+    :fechaFin "2026-02-28"^^xsd:date ;
+    :duracionMeses "12"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaEmpleado :CarlaRuiz ;
+    :contratoAsociaEmpleador :EmpresaGamma .
+
+:ContratoLab004 a :Contrato, :ContratoLaboral ;
+    :fechaInicio "2025-04-01"^^xsd:date ;
+    :fechaFin "2026-03-31"^^xsd:date ;
+    :duracionMeses "12"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaEmpleado :DiegoPerez ;
+    :contratoAsociaEmpleador :EmpresaDelta .
+
+#################################################################
+# Individuos - Contratos de prestación de servicios
+#################################################################
+
+:ContratoPS001 a :Contrato, :ContratoPrestacionServicios ;
+    :fechaInicio "2025-01-10"^^xsd:date ;
+    :fechaFin "2025-07-10"^^xsd:date ;
+    :duracionMeses "6"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaContratista :SofiaMoreno ;
+    :contratoAsociaContratante :EmpresaAlfa .
+
+:ContratoPS002 a :Contrato, :ContratoPrestacionServicios ;
+    :fechaInicio "2025-02-15"^^xsd:date ;
+    :fechaFin "2025-08-14"^^xsd:date ;
+    :duracionMeses "6"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaContratista :TomasVega ;
+    :contratoAsociaContratante :EmpresaBeta .
+
+:ContratoPS003 a :Contrato, :ContratoPrestacionServicios ;
+    :fechaInicio "2025-03-20"^^xsd:date ;
+    :fechaFin "2025-09-19"^^xsd:date ;
+    :duracionMeses "6"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaContratista :ValeriaCruz ;
+    :contratoAsociaContratante :EmpresaGamma .
+
+:ContratoPS004 a :Contrato, :ContratoPrestacionServicios ;
+    :fechaInicio "2025-04-25"^^xsd:date ;
+    :fechaFin "2025-10-24"^^xsd:date ;
+    :duracionMeses "6"^^xsd:integer ;
+    :activo "true"^^xsd:boolean ;
+    :contratoAsociaContratista :WalterNino ;
+    :contratoAsociaContratante :EmpresaDelta .
+
+#################################################################
+# Individuos - Puestos
+#################################################################
+
+:PuestoDesarrolladorSenior a :Puesto ;
+    :tituloPuesto "Desarrollador Senior" .
+
+:PuestoAnalistaNomina a :Puesto ;
+    :tituloPuesto "Analista de Nómina" .
+
+:PuestoDisenadoraUX a :Puesto ;
+    :tituloPuesto "Diseñadora UX" .
+
+:PuestoCoordinadorTI a :Puesto ;
+    :tituloPuesto "Coordinador de TI" .
+
+#################################################################
+# Individuos - Salarios
+#################################################################
+
+:Salario001 a :Salario ;
+    :salarioBase "6500000.00"^^xsd:decimal ;
+    :moneda "COP" .
+
+:Salario002 a :Salario ;
+    :salarioBase "4200000.00"^^xsd:decimal ;
+    :moneda "COP" .
+
+:Salario003 a :Salario ;
+    :salarioBase "5800000.00"^^xsd:decimal ;
+    :moneda "COP" .
+
+:Salario004 a :Salario ;
+    :salarioBase "7000000.00"^^xsd:decimal ;
+    :moneda "COP" .
+
+#################################################################
+# Individuos - Departamentos
+#################################################################
+
+:DepartamentoTecnologia a :Departamento ;
+    :nombreDepartamento "Tecnología" .
+
+:DepartamentoTalentoHumano a :Departamento ;
+    :nombreDepartamento "Talento Humano" .
+
+:DepartamentoDiseno a :Departamento ;
+    :nombreDepartamento "Diseño" .
+
+:DepartamentoOperaciones a :Departamento ;
+    :nombreDepartamento "Operaciones" .
+
+#################################################################
+# Individuos - Jornadas
+#################################################################
+
+:JornadaDiurna a :JornadaLaboral ;
+    :horasSemanales "48"^^xsd:integer .
+
+:JornadaMixta a :JornadaLaboral ;
+    :horasSemanales "44"^^xsd:integer .
+
+:JornadaRemota a :JornadaLaboral ;
+    :horasSemanales "40"^^xsd:integer .
+
+:JornadaFlexible a :JornadaLaboral ;
+    :horasSemanales "42"^^xsd:integer .
+
+#################################################################
+# Individuos - Beneficios
+#################################################################
+
+:BeneficioSaludPlus a :Beneficio ;
+    :tipoBeneficio "Plan complementario de salud" .
+
+:BeneficioBonoAlimentacion a :Beneficio ;
+    :tipoBeneficio "Bono de alimentación" .
+
+:BeneficioCapacitacion a :Beneficio ;
+    :tipoBeneficio "Capacitación anual" .
+
+:BeneficioSeguroVida a :Beneficio ;
+    :tipoBeneficio "Seguro de vida" .
+
+#################################################################
+# Relaciones adicionales
+#################################################################
+
+:EmpresaAlfa :empleaA :AnaLopez ;
+    :asignaPuesto :PuestoDesarrolladorSenior ;
+    :contrataA :SofiaMoreno .
+
+:EmpresaBeta :empleaA :BrunoDiaz ;
+    :asignaPuesto :PuestoAnalistaNomina ;
+    :contrataA :TomasVega .
+
+:EmpresaGamma :empleaA :CarlaRuiz ;
+    :asignaPuesto :PuestoDisenadoraUX ;
+    :contrataA :ValeriaCruz .
+
+:EmpresaDelta :empleaA :DiegoPerez ;
+    :asignaPuesto :PuestoCoordinadorTI ;
+    :contrataA :WalterNino .

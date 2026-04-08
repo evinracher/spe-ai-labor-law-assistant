@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 _RED = "\033[91m"
 _GREEN = "\033[92m"
 _YELLOW = "\033[93m"
+_BLUE = "\033[94m"
 _RESET = "\033[0m"
 
 # Project paths
@@ -641,6 +642,82 @@ def generar_documento_legal(tipo_documento: str, nombre_usuario: str, hechos_cla
     return borrador
 
 
+@tool
+def query_knowledge_graph(question: str) -> dict:
+    """
+    Consulta el Knowledge Graph (ontología laboral en GraphDB) mediante SPARQL.
+
+    Esta herramienta accede a la base de conocimiento estructurada que contiene
+    información sobre empleados, contratos, salarios, empresas, jornadas laborales,
+    beneficios y relaciones entre entidades del dominio laboral colombiano.
+
+    A diferencia de la búsqueda vectorial (semántica sobre texto), esta herramienta
+    permite consultas ESTRUCTURADAS sobre relaciones, datos numéricos exactos y
+    propiedades específicas de las entidades.
+
+    Args:
+        question: Pregunta en lenguaje natural sobre datos estructurados del knowledge graph.
+                  Ejemplos:
+                  - "¿Cuáles son los empleados de la Empresa Alfa?"
+                  - "¿Qué tipo de contrato tiene Ana López?"
+                  - "¿Cuánto gana el Coordinador de TI?"
+                  - "¿Qué beneficios ofrece la Empresa Beta?"
+                  - "Lista todos los contratos de prestación de servicios activos"
+                  - "¿En qué departamento trabaja Bruno Díaz?"
+
+    Returns:
+        Dictionary con la consulta SPARQL ejecutada, los resultados y el contexto formateado.
+    """
+    print(f"{_BLUE}[TOOL KG] query_knowledge_graph - Pregunta: {question}{_RESET}")
+
+    try:
+        if not settings.GRAPHDB_ENABLED:
+            print(f"{_YELLOW}[TOOL KG] GraphDB deshabilitado{_RESET}")
+            return {
+                "question": question,
+                "sparql_query": None,
+                "total_results": 0,
+                "results": [],
+                "context": "",
+                "source": "graphdb_disabled",
+            }
+
+        from app.rag.graph_retriever import query_graph
+
+        # Lazy import of the LLM to avoid circular imports at module load time.
+        # The agents module already initialises gemini_LLM at import; we reuse it.
+        from app.rag.llm import get_llm
+
+        llm = get_llm()
+
+        graph_result = query_graph(question, llm)
+
+        output = {
+            "question": question,
+            "sparql_query": graph_result.get("sparql_query"),
+            "total_results": len(graph_result.get("results", [])),
+            "results": graph_result.get("results", [])[:10],  # Cap to avoid huge payloads
+            "context": graph_result.get("context", ""),
+            "source": graph_result.get("source", "graphdb"),
+        }
+
+        print(
+            f"{_BLUE}[TOOL KG] query_knowledge_graph - Resultados: {output['total_results']}{_RESET}"
+        )
+        return output
+
+    except Exception as e:
+        print(f"{_RED}[TOOL KG] query_knowledge_graph - ERROR: {e!s}{_RESET}")
+        return {
+            "question": question,
+            "sparql_query": None,
+            "total_results": 0,
+            "results": [],
+            "context": "",
+            "error": str(e),
+        }
+
+
 TOOLS_LIST = [
     search_by_law_number,
     get_article_text,
@@ -651,6 +728,7 @@ TOOLS_LIST = [
     verify_citation_exists,
     evaluar_riesgo_laboral,
     generar_documento_legal,
+    query_knowledge_graph,
 ]
 
 TOOLS_DICT = {
@@ -663,4 +741,5 @@ TOOLS_DICT = {
     "verify_citation_exists": verify_citation_exists,
     "evaluar_riesgo_laboral": evaluar_riesgo_laboral,
     "generar_documento_legal": generar_documento_legal,
+    "query_knowledge_graph": query_knowledge_graph,
 }
