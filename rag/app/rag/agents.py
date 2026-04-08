@@ -26,6 +26,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
+import google.api_core.exceptions
+from google import genai
+from google.genai import types
 from langchain.agents import create_agent
 from langchain_chroma import Chroma
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -43,15 +46,14 @@ from app.rag.prompts import (
     COMPARE_PROMPT,
     DOMAIN_SEARCH_PROMPT,
     DRAFT_DOCUMENT_PROMPT,
+    FALLBACK_SYSTEM_INSTRUCTION,
     GENERAL_SYSTEM_PROMPT,
+    SELF_CRITIQUE_PROMPT,
     SUMMARIZE_PROMPT,
-    VALIDATE_PROMPT,
 )
 from app.rag.query_transformer import QueryTransformer
 from app.rag.retriever import formatear_documentos_para_gemini, recuperar_contexto_dinamico
 from app.rag.tools import (
-    # Tools registry
-    check_law_vigency,
     evaluar_riesgo_laboral,
     find_related_jurisprudence,
     # Tool de generación de documentos legales
@@ -61,8 +63,6 @@ from app.rag.tools import (
     list_laws_by_topic,
     # Data Access Tools
     search_by_law_number,
-    # Validation Tools
-    verify_citation_exists,
 )
 
 #
@@ -158,11 +158,6 @@ COMPARE_TOOLS = [
     get_article_text,
 ]
 
-VALIDATE_TOOLS = [
-    verify_citation_exists,
-    check_law_vigency,
-]
-
 DRAFT_DOCUMENT_TOOLS = [
     generar_documento_legal,
 ]
@@ -190,11 +185,6 @@ compare_agent = create_agent(
     model=gemini_LLM, tools=COMPARE_TOOLS, system_prompt=COMPARE_PROMPT, name="compare_agent"
 )
 
-# Agente para validación
-validate_agent = create_agent(
-    model=gemini_LLM, tools=VALIDATE_TOOLS, system_prompt=VALIDATE_PROMPT, name="validate_agent"
-)
-
 # Agente redactor de documentos legales
 draft_document_agent = create_agent(
     model=gemini_LLM,
@@ -204,13 +194,40 @@ draft_document_agent = create_agent(
 )
 
 
-print("✅ ReAct agents created: domain_search, summarize, compare, validate, draft_document")
+print("✅ ReAct agents created: domain_search, summarize, compare, draft_document")
+
+
+# Maximum total generation attempts (initial + retries) before activating fallback
+MAX_ATTEMPTS = 3
 
 
 class ClassifierOutput(BaseModel):
     question: str = Field(description="The original user question.")
     intent: Literal["domainSearch", "summarize", "compare", "generalSearch", "draftDocument"] = (
         Field(description="User intent.")
+    )
+
+
+class SelfCritiqueOutput(BaseModel):
+    """Structured output from the LLM self-evaluation of a generated answer."""
+
+    addresses_question: bool = Field(
+        description="Does the answer fully address all aspects of the user's question?"
+    )
+    is_complete: bool = Field(
+        description="Is the answer sufficiently detailed and does it avoid omitting key information?"
+    )
+    is_grounded: bool = Field(
+        description="Does the answer explicitly reference specific legal sources from the retrieved context?"
+    )
+    is_valid: bool = Field(
+        description="Overall verdict: True only if all three criteria (addresses_question, is_complete, is_grounded) are True."
+    )
+    critique: str = Field(
+        description="Specific explanation of what is wrong or missing. Empty string if is_valid is True."
+    )
+    suggested_improvement: str = Field(
+        description="Concrete instruction for what to improve in the next attempt. Empty string if is_valid is True."
     )
 
 
@@ -224,10 +241,16 @@ class GraphState(TypedDict):
     is_valid: bool
     documentos_recuperados: list  # Documentos para citaciones
     query_transform: dict  # QueryTransformResult serialized for traceability
+    retry_count: int  # Counts total generation attempts (incremented by validate_node)
+    validation_critique: str  # LLM critique from last validate_node run; fed into next attempt
+    validation_suggested_improvement: str  # Extracted suggested_improvement field; used by rag_node to augment the retrieval query
 
 
 # Usamos gemini para la clasificación de intención porque es más fuerte en tareas de comprensión y clasificación, mientras que groq lo dejamos para manejo de la lógica del grafo.
 classifier_chain = CLASSIFIER_PROMPT | gemini_LLM.with_structured_output(ClassifierOutput)
+
+# Self-critique chain: evaluates answer quality on three dimensions (structured output)
+self_critique_chain = SELF_CRITIQUE_PROMPT | gemini_LLM.with_structured_output(SelfCritiqueOutput)
 
 
 def classifier_node(state: GraphState):
@@ -280,6 +303,8 @@ def domain_search_node(state: GraphState):
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
     historial = _build_conversation_history(state["messages"])
+    validation_critique = state.get("validation_critique", "")
+    retry_count = state.get("retry_count", 0)
 
     # Prompt que incluye el contexto vectorial y el historial
     prompt_con_contexto = (
@@ -295,6 +320,15 @@ def domain_search_node(state: GraphState):
         f"5. Si notas abuso laboral, o riesgos laborales y/o legales, usa la herramienta 'evaluar_riesgo_laboral' e incluye el semáforo al final.\n"
         f"6. NUNCA redactes documentos legales completos aquí. Solo SUGIERE al usuario: 'Si deseas, puedo ayudarte a redactar un documento legal, solo pídeme que lo genere'."
     )
+
+    # On retries, append critique so the agent knows exactly what to improve
+    if validation_critique and retry_count > 0:
+        prompt_con_contexto += (
+            f"\n\n--- RETROALIMENTACIÓN DEL INTENTO ANTERIOR (intento {retry_count}) ---\n"
+            f"{validation_critique}\n"
+            f"Corrige específicamente los puntos señalados. Usa las herramientas si necesitas información adicional."
+        )
+        print(f"{_RED}[DEBUG]: domain_search_node - Retry {retry_count}: critique injected{_RESET}")
 
     # Invocar el agente ReAct - él decide si usa tools o responde directo
     result = domain_search_agent.invoke(
@@ -329,6 +363,8 @@ def summarize_node(state: GraphState):
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
     historial = _build_conversation_history(state["messages"])
+    validation_critique = state.get("validation_critique", "")
+    retry_count = state.get("retry_count", 0)
 
     prompt_con_contexto = (
         f"{historial}"
@@ -337,6 +373,14 @@ def summarize_node(state: GraphState):
         f"Genera un resumen estructurado. Si el contexto es suficiente, úsalo directamente. "
         f"Si necesitas más detalle de artículos específicos, usa las herramientas."
     )
+
+    if validation_critique and retry_count > 0:
+        prompt_con_contexto += (
+            f"\n\n--- RETROALIMENTACIÓN DEL INTENTO ANTERIOR (intento {retry_count}) ---\n"
+            f"{validation_critique}\n"
+            f"Amplía y corrige el resumen considerando los puntos señalados."
+        )
+        print(f"{_RED}[DEBUG]: summarize_node - Retry {retry_count}: critique injected{_RESET}")
 
     result = summarize_agent.invoke(
         {"messages": [{"role": "user", "content": prompt_con_contexto}]}
@@ -368,6 +412,8 @@ def compare_node(state: GraphState):
     question = state["question"]
     contexto_previo = state.get("contexto_legal", "")
     historial = _build_conversation_history(state["messages"])
+    validation_critique = state.get("validation_critique", "")
+    retry_count = state.get("retry_count", 0)
 
     prompt_con_contexto = (
         f"{historial}"
@@ -376,6 +422,14 @@ def compare_node(state: GraphState):
         f"Compara los conceptos solicitados. Si el contexto tiene la información, úsalo. "
         f"Si necesitas artículos específicos de cada concepto, usa las herramientas."
     )
+
+    if validation_critique and retry_count > 0:
+        prompt_con_contexto += (
+            f"\n\n--- RETROALIMENTACIÓN DEL INTENTO ANTERIOR (intento {retry_count}) ---\n"
+            f"{validation_critique}\n"
+            f"Mejora la comparación abordando los puntos señalados."
+        )
+        print(f"{_RED}[DEBUG]: compare_node - Retry {retry_count}: critique injected{_RESET}")
 
     result = compare_agent.invoke({"messages": [{"role": "user", "content": prompt_con_contexto}]})
 
@@ -404,12 +458,27 @@ def rag_node(state: GraphState):
     Applies HyDE, Decomposition, or passes the query through unchanged depending
     on the QueryTransformer's analysis. Retrieved documents are deduplicated across
     all effective queries before being stored in state.
+
+    On retries (retry_count > 0), the query is augmented with the validation critique
+    so the transformer can select a better strategy and expand context.
     """
     print(f"{_RED}[DEBUG]: rag_node - Adaptive retrieval started{_RESET}")
     question = state["question"]
+    retry_count = state.get("retry_count", 0)
 
-    # 1. Transform the query
-    transform_result = _query_transformer.transform(question)
+    # On retries, augment the retrieval query with the stored improvement hint so that
+    # the QueryTransformer can select a different/better strategy and the
+    # vector search targets the missing information.
+    effective_question = question
+    improvement_hint = state.get("validation_suggested_improvement", "")
+    if improvement_hint and retry_count > 0:
+        effective_question = f"{question} {improvement_hint}"
+        print(
+            f"{_RED}[DEBUG]: rag_node - Retry {retry_count}: query augmented with improvement hint{_RESET}"
+        )
+
+    # 1. Transform the (possibly augmented) query
+    transform_result = _query_transformer.transform(effective_question)
     print(
         f"{_RED}[DEBUG]: rag_node - strategy={transform_result.strategy.value}, "
         f"queries={len(transform_result.effective_queries)}{_RESET}"
@@ -450,95 +519,133 @@ def rag_node(state: GraphState):
 
 def validate_node(state: GraphState):
     """
-    Nodo ReAct de validación que decide autónomamente:
-    - Qué citaciones verificar con verify_citation_exists
-    - Qué leyes revisar con check_law_vigency
-    - Si la respuesta es válida o necesita corrección
+    Reflection node: evaluates the generated answer on three quality dimensions
+    using an LLM structured-output self-critique chain.
+
+    Dimensions evaluated:
+      - addresses_question: does the answer fully cover what was asked?
+      - is_complete: is it sufficiently detailed?
+      - is_grounded: does it cite concrete legal sources from the retrieved context?
+
+    Additionally increments retry_count and stores the critique string so that
+    the next rag_node + specialist_node cycle can improve on previous failures.
     """
     answer_content = state["messages"][-1].content
-    # Asegurar que answer sea string
     answer = str(answer_content) if not isinstance(answer_content, str) else answer_content
+    question = state["question"]
     intent = state.get("intent", "generalSearch")
-    print(f"{_RED}[DEBUG]: validate_node (ReAct) - intent={intent}{_RESET}")
-
-    # Validación básica primero (criterios que no necesitan tools)
-    has_content = len(answer.strip()) > 50
-    uncertainty_phrases = [
-        "no sé",
-        "no tengo información",
-        "no puedo responder",
-        "no encontré",
-        "fuera de mi conocimiento",
-        "no dispongo",
-    ]
-    not_uncertain = not any(phrase in answer.lower() for phrase in uncertainty_phrases)
-
-    # Para intents legales, usar el agente ReAct para validación profunda
-    if intent in ["domainSearch", "summarize", "compare"]:
-        # Construir prompt para el agente validador
-        validation_request = (
-            f"Valida la siguiente respuesta legal:\n\n"
-            f"RESPUESTA A VALIDAR:\n{answer}\n\n"
-            f"Por favor:\n"
-            f"1. Identifica las citaciones legales mencionadas (artículos, leyes, decretos)\n"
-            f"2. Verifica si existen las citaciones principales usando verify_citation_exists\n"
-            f"3. Verifica si las leyes mencionadas están vigentes usando check_law_vigency\n"
-            f"4. Indica si la respuesta es VÁLIDA o NO VÁLIDA y por qué"
-        )
-
-        try:
-            result = validate_agent.invoke(
-                {"messages": [{"role": "user", "content": validation_request}]}
-            )
-
-            final_message = result["messages"][-1]
-            # validation_result = final_message.content if hasattr(final_message, 'content') else str(final_message)
-
-            if isinstance(final_message.content, list):
-                validation_result = " ".join(str(b) for b in final_message.content)
-            else:
-                validation_result = str(final_message.content)
-
-            # Log de tools usadas
-            tool_calls = [
-                msg for msg in result["messages"] if hasattr(msg, "tool_calls") and msg.tool_calls
-            ]
-            if tool_calls:
-                print(
-                    f"{_RED}[DEBUG]: validate_node - Validaciones ejecutadas: {len(tool_calls)} tools{_RESET}"
-                )
-
-            # Determinar validez basado en respuesta del agente
-            validation_lower = validation_result.lower()
-            is_valid_from_agent = (
-                "válida" in validation_lower
-                and "no válida" not in validation_lower
-                and "inválida" not in validation_lower
-            )
-
-            print(
-                f"{_RED}[DEBUG]: validate_node - Resultado agente: {'VÁLIDA' if is_valid_from_agent else 'NO VÁLIDA'}{_RESET}"
-            )
-
-            # Combinar criterios básicos con validación del agente
-            is_valid = has_content and not_uncertain and is_valid_from_agent
-
-        except Exception as e:
-            print(f"{_RED}[DEBUG]: validate_node - Error en agente: {e}{_RESET}")
-            # Fallback a validación básica
-            legal_terms = ["artículo", "ley", "decreto", "código", "art.", "numeral"]
-            has_legal_reference = any(term in answer.lower() for term in legal_terms)
-            is_valid = has_content and not_uncertain and has_legal_reference
-    else:
-        # Para generalSearch, validación básica
-        is_valid = has_content and not_uncertain
+    contexto = state.get("contexto_legal", "")
+    current_retry_count = state.get("retry_count", 0)
 
     print(
-        f"{_RED}[DEBUG]: validate_node - valid={is_valid} "
-        f"(content={has_content}, certain={not_uncertain}){_RESET}"
+        f"{_RED}[DEBUG]: validate_node - intent={intent}, attempt={current_retry_count + 1}/{MAX_ATTEMPTS}{_RESET}"
     )
 
-    return {"is_valid": is_valid}
+    # ------------------------------------------------------------------ #
+    # Non-legal intents: lightweight heuristic check (no self-critique)   #
+    # ------------------------------------------------------------------ #
+    if intent in ("generalSearch", "draftDocument"):
+        has_content = len(answer.strip()) > 50
+        uncertainty_phrases = [
+            "no sé",
+            "no tengo información",
+            "no puedo responder",
+            "no encontré",
+            "fuera de mi conocimiento",
+            "no dispongo",
+        ]
+        is_valid = has_content and not any(p in answer.lower() for p in uncertainty_phrases)
+        new_critique = (
+            "" if is_valid else "La respuesta es insuficiente o expresa demasiada incertidumbre."
+        )
+        new_improvement = (
+            ""
+            if is_valid
+            else "Ofrece una respuesta más completa y directa a la pregunta del usuario."
+        )
+
+        print(f"{_RED}[DEBUG]: validate_node - heuristic valid={is_valid}{_RESET}")
+        return {
+            "is_valid": is_valid,
+            "retry_count": current_retry_count + 1,
+            "validation_critique": new_critique,
+            "validation_suggested_improvement": new_improvement,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Legal intents: LLM-based self-critique on quality + grounding       #
+    # ------------------------------------------------------------------ #
+    try:
+        # Truncate inputs to avoid excessive token consumption
+        critique_result: SelfCritiqueOutput = self_critique_chain.invoke(
+            {
+                "question": question,
+                "context": contexto[:3000],
+                "answer": answer[:3000],
+            }
+        )
+
+        is_valid = critique_result.is_valid
+
+        if is_valid:
+            new_critique = ""
+            new_improvement = ""
+        else:
+            # Build a structured critique string for specialist nodes
+            failures = []
+            if not critique_result.addresses_question:
+                failures.append("❌ No aborda completamente la pregunta")
+            if not critique_result.is_complete:
+                failures.append("❌ Respuesta incompleta o poco detallada")
+            if not critique_result.is_grounded:
+                failures.append("❌ Falta de referencias legales concretas del contexto recuperado")
+
+            new_critique = (
+                f"Problemas detectados: {'; '.join(failures)}\n"
+                f"Detalle: {critique_result.critique}\n"
+                f"Mejora sugerida: {critique_result.suggested_improvement}"
+            )
+            # Store the improvement hint as a dedicated field so rag_node can use it directly
+            new_improvement = critique_result.suggested_improvement
+
+        print(
+            f"{_RED}[DEBUG]: validate_node - LLM self-critique: "
+            f"addresses={critique_result.addresses_question}, "
+            f"complete={critique_result.is_complete}, "
+            f"grounded={critique_result.is_grounded}, "
+            f"valid={is_valid}{_RESET}"
+        )
+
+    except Exception as e:
+        # Fallback to heuristic validation if the self-critique chain fails
+        print(
+            f"{_RED}[DEBUG]: validate_node - Self-critique error (fallback to heuristic): {e}{_RESET}"
+        )
+        has_content = len(answer.strip()) > 50
+        legal_terms = ["artículo", "ley", "decreto", "código", "art.", "numeral"]
+        has_legal_reference = any(term in answer.lower() for term in legal_terms)
+        is_valid = has_content and has_legal_reference
+        new_critique = (
+            ""
+            if is_valid
+            else "La respuesta carece de referencias legales específicas o es demasiado breve."
+        )
+        new_improvement = (
+            ""
+            if is_valid
+            else "Incluye citas legales concretas (artículo, ley o decreto) que respalden la respuesta."
+        )
+
+    print(
+        f"{_RED}[DEBUG]: validate_node - final valid={is_valid}, "
+        f"retry_count now={current_retry_count + 1}{_RESET}"
+    )
+    return {
+        "is_valid": is_valid,
+        "retry_count": current_retry_count + 1,
+        "validation_critique": new_critique,
+        "validation_suggested_improvement": new_improvement,
+    }
 
 
 def draft_document_node(state: GraphState):
@@ -573,12 +680,37 @@ def draft_document_node(state: GraphState):
     return {"messages": [AIMessage(content=agent_response)]}
 
 
-def validate_route(state: GraphState) -> Literal["rag_node", "__end__"]:
+def validate_route(
+    state: GraphState,
+) -> Literal["rag_node", "general_search_node", "fallback_node", "__end__"]:
+    """
+    Routes after validate_node:
+      - END                 → answer passed self-critique
+      - rag_node            → legal intent failed but retry_count < MAX_ATTEMPTS
+      - general_search_node → generalSearch intent failed but retry_count < MAX_ATTEMPTS
+      - fallback_node       → any intent failed and MAX_ATTEMPTS reached; switch to Google Search
+    """
     if state["is_valid"]:
-        print(f"{_RED}[DEBUG]: validate_node — answer is valid{_RESET}")
-        return END  # Ir directamente al final, saltando el nodo de integración
+        print(f"{_RED}[DEBUG]: validate_route — answer is valid → END{_RESET}")
+        return END
 
-    print(f"{_RED}[DEBUG]: validate_node — answer is NOT valid, will retry with RAG node{_RESET}")
+    retry_count = state.get("retry_count", 0)
+    if retry_count >= MAX_ATTEMPTS:
+        print(
+            f"{_RED}[DEBUG]: validate_route — {retry_count} attempts exhausted → fallback_node{_RESET}"
+        )
+        return "fallback_node"
+
+    intent = state.get("intent", "generalSearch")
+    if intent == "generalSearch":
+        print(
+            f"{_RED}[DEBUG]: validate_route — attempt {retry_count}/{MAX_ATTEMPTS} failed (generalSearch) → general_search_node{_RESET}"
+        )
+        return "general_search_node"
+
+    print(
+        f"{_RED}[DEBUG]: validate_route — attempt {retry_count}/{MAX_ATTEMPTS} failed → rag_node (retry){_RESET}"
+    )
     return "rag_node"
 
 
@@ -608,6 +740,69 @@ def rag_route(
         return "draft_document_node"
 
 
+def fallback_node(state: GraphState):
+    """
+    Fallback node: activated after MAX_ATTEMPTS failed self-critiques.
+
+    Uses Gemini's native google_search grounding tool (no external API key required)
+    to retrieve up-to-date information and generate an answer in a single call.
+    The response is clearly marked as fallback so the user knows the internal
+    knowledge base was insufficient.
+    """
+    question = state["question"]
+    print(f"{_RED}[DEBUG]: fallback_node — activating Gemini google_search grounding{_RESET}")
+
+    if not settings.GOOGLE_API_KEY:
+        print(f"{_RED}[DEBUG]: fallback_node — GOOGLE_API_KEY not set, skipping search{_RESET}")
+        return {
+            "messages": [
+                AIMessage(
+                    content=(
+                        "Lo siento, el sistema interno no encontró una respuesta satisfactoria "
+                        f"tras {MAX_ATTEMPTS} intentos y el mecanismo de búsqueda web no está "
+                        "disponible porque la clave de API de Google no está configurada. "
+                        "Por favor consulta directamente el Código Sustantivo del Trabajo "
+                        "o un abogado laboral especializado."
+                    )
+                )
+            ]
+        }
+
+    try:
+        # Use the google-genai client with the built-in google_search tool.
+        # No additional API key is needed beyond the existing GOOGLE_API_KEY.
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=question,
+            config=types.GenerateContentConfig(
+                system_instruction=FALLBACK_SYSTEM_INSTRUCTION,
+                tools=[{"google_search": {}}],
+            ),
+        )
+        answer_text = response.text or ""
+        print(
+            f"{_RED}[DEBUG]: fallback_node — google_search response ready ({len(answer_text)} chars){_RESET}"
+        )
+        fallback_answer = (
+            f"{answer_text}\n\n"
+            f"---\n"
+            f"⚠️ *Esta respuesta fue generada mediante la herramienta Google Search integrada en Gemini "
+            f"como mecanismo de respaldo, ya que el sistema interno no encontró una respuesta "
+            f"satisfactoria tras {MAX_ATTEMPTS} intentos de auto-evaluación.*"
+        )
+    except Exception as e:
+        print(f"{_RED}[DEBUG]: fallback_node — google_search error: {e}{_RESET}")
+        fallback_answer = (
+            "Lo siento, no pude encontrar información suficiente sobre tu consulta en la base de "
+            "conocimiento interna ni mediante búsqueda web. Te recomiendo consultar directamente el "
+            "Código Sustantivo del Trabajo o un abogado laboral especializado.\n\n"
+        )
+
+    print(f"{_RED}[DEBUG]: fallback_node — answer ready{_RESET}")
+    return {"messages": [AIMessage(content=fallback_answer)]}
+
+
 graph = StateGraph(GraphState)
 
 graph.add_node("classifier_node", classifier_node)
@@ -617,8 +812,8 @@ graph.add_node("compare_node", compare_node)
 graph.add_node("general_search_node", general_search_node)
 graph.add_node("validate_node", validate_node)
 graph.add_node("draft_document_node", draft_document_node)
-# graph.add_node("integrate_node", integrate_node)
 graph.add_node("rag_node", rag_node)
+graph.add_node("fallback_node", fallback_node)
 
 graph.add_edge(START, "classifier_node")
 graph.add_conditional_edges("classifier_node", classify_route)
@@ -631,6 +826,7 @@ graph.add_edge("compare_node", "validate_node")
 graph.add_edge("draft_document_node", "validate_node")
 graph.add_edge("general_search_node", "validate_node")  # No necesita RAG
 graph.add_conditional_edges("validate_node", validate_route)
+graph.add_edge("fallback_node", END)
 
 memory = InMemorySaver()
 chat = graph.compile(checkpointer=memory)
@@ -646,6 +842,28 @@ if __name__ == "__main__":
 """
 
 
+def _is_model_unavailable_error(exc: Exception) -> bool:
+    """Return True if *exc* indicates the AI model is temporarily unavailable (503/429/UNAVAILABLE)."""
+    if isinstance(
+        exc,
+        google.api_core.exceptions.ServiceUnavailable
+        | google.api_core.exceptions.ResourceExhausted,
+    ):
+        return True
+    msg = str(exc).upper()
+    return any(
+        token in msg
+        for token in (
+            "503",
+            "UNAVAILABLE",
+            "SERVICE_UNAVAILABLE",
+            "RESOURCE_EXHAUSTED",
+            "429",
+            "TOO MANY REQUESTS",
+        )
+    )
+
+
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
     if conversation_id is None:
         conversation_id = "conversation_1"
@@ -654,7 +872,29 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
     # Inyectamos la pregunta en el estado inicial
     initial_messages = {"messages": [HumanMessage(content=question)], "question": question}
     # Ejecutamos el grafo y capturamos TODO el estado final
-    state_output = chat.invoke(initial_messages, config=config)
+    try:
+        state_output = chat.invoke(initial_messages, config=config)
+    except Exception as exc:
+        if _is_model_unavailable_error(exc):
+            print(f"{_RED}[DEBUG]: ask_chat - Model unavailable: {exc}{_RESET}")
+            request_id = f"req-{uuid.uuid4().hex[:8]}-{conversation_id}"
+            return ChatResponse(
+                ok=False,
+                request_id=request_id,
+                answer=(
+                    "Lo sentimos, el modelo de IA no está disponible en este momento debido a alta "
+                    "demanda o a una interrupción temporal del servicio. "
+                    "Por favor, inténtalo de nuevo en unos minutos."
+                ),
+                citations=[],
+                trace=Trace(
+                    intent=None,
+                    top_k=0,
+                    vector_db=settings.VECTOR_DB,
+                    llm_provider=settings.LLM_PROVIDER,
+                ),
+            )
+        raise
     # Extraemos la respuesta del LLM (puede venir como string o lista de content blocks)
     raw_content = state_output["messages"][-1].content
     if isinstance(raw_content, list):
