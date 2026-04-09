@@ -57,6 +57,7 @@ REGLAS:
 - SIEMPRE responde en español
 - Cita las fuentes exactas (Ley X, Artículo Y, Página Z)
 - Si usas datos del Knowledge Graph, indica que provienen de la ontología/base de conocimiento estructurada
+- Cuando expliques un concepto legal (ej: contrato laboral, prestación de servicios, jornada laboral, salario), usa la herramienta 'query_knowledge_graph' para obtener EJEMPLOS REALES de la ontología e ilustrar tu respuesta con datos concretos (nombres, empresas, montos, fechas). Esto hace la respuesta más clara y práctica.
 - Si no encuentras información, indícalo claramente
 - NO inventes información que no esté en las herramientas"""
 
@@ -83,6 +84,7 @@ REGLAS:
 - Usa bullets para mejor legibilidad
 - Incluye las fuentes al final del resumen (Ley X, Artículo Y, Página Z)
 - Si usas datos del Knowledge Graph, indica su origen
+- Cuando resumas un concepto, usa 'query_knowledge_graph' para incluir EJEMPLOS REALES de la ontología que ilustren el concepto (ej: si resumes contratos de prestación de servicios, muestra contratistas y empresas reales del knowledge graph)
 - Si el tema es complejo, divide en secciones
 - Si no encuentras información, indícalo claramente
 - NO inventes información que no esté en las herramientas"""
@@ -113,6 +115,7 @@ REGLAS:
 - Usa tablas para comparaciones claras
 - Cita los artículos específicos de cada concepto (Ley X, Artículo Y, Página Z)
 - Si usas datos del Knowledge Graph, indica su origen
+- Cuando compares conceptos, usa 'query_knowledge_graph' para obtener EJEMPLOS REALES de cada tipo y mostrar diferencias concretas con datos de la ontología (ej: comparar un contrato laboral vs uno de prestación de servicios con casos reales)
 - Si no encuentras información, indícalo claramente
 - NO inventes información que no esté en las herramientas"""
 
@@ -186,8 +189,9 @@ Evalúa la respuesta en TRES dimensiones de forma independiente:
    - TRUE si contiene la información necesaria con suficiente profundidad y no omite aspectos importantes.
    - FALSE si es superficial, omite información claramente relevante o no desarrolla los puntos clave.
 
-3. **is_grounded** (¿La respuesta se basa en el contexto legal recuperado?):
+3. **is_grounded** (¿La respuesta se basa en el contexto recuperado?):
    - TRUE si hace referencia explícita a artículos, leyes, decretos o fragmentos del contexto proporcionado.
+   - TRUE TAMBIÉN si la respuesta utiliza datos estructurados del Knowledge Graph (nombres de empleados, empresas, contratos, salarios, fechas, departamentos, beneficios) que aparecen en el contexto proporcionado. Estos datos son evidencia válida.
    - FALSE si la respuesta es genérica, no cita fuentes concretas del contexto dado, o menciona información no presente en el contexto.
 
 **is_valid** debe ser TRUE solo si los TRES criterios son TRUE simultáneamente.
