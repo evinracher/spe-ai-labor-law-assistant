@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from langchain_chroma import Chroma
 from langchain_core.tools import tool
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langsmith import traceable
 
 from app.core.config import settings
 
@@ -298,6 +299,7 @@ def list_laws_by_topic(topic: str, max_results: int = 10) -> dict:
         return {"topic": topic, "total_laws_found": 0, "laws": [], "error": str(e)}
 
 
+
 @tool
 def get_document_metadata(doc_id: str) -> dict:
     """
@@ -360,6 +362,7 @@ def get_document_metadata(doc_id: str) -> dict:
         return {"doc_id": doc_id, "found": False, "error": str(e)}
 
 
+
 @tool
 def check_law_vigency(law_name: str) -> dict:
     """
@@ -417,6 +420,7 @@ def check_law_vigency(law_name: str) -> dict:
     except Exception as e:
         print(f"{_RED}[TOOL 5] check_law_vigency - ERROR: {e!s}{_RESET}")
         return {"law_name": law_name, "found_in_db": False, "error": str(e)}
+
 
 
 @tool
@@ -507,7 +511,6 @@ def find_related_jurisprudence(legal_topic: str, max_results: int = 5) -> dict:
         print(f"{_RED}[TOOL 6] find_related_jurisprudence - ERROR: {e!s}{_RESET}")
         return {"topic": legal_topic, "total_found": 0, "jurisprudence": [], "error": str(e)}
 
-
 @tool
 def verify_citation_exists(law_name: str, article_number: str) -> dict:
     """
@@ -594,6 +597,7 @@ def evaluar_riesgo_laboral(clausula_o_situacion: str) -> str:
         "💡 **RECOMENDACIÓN:** (Qué debe hacer a continuación. AQUÍ ES DONDE LE SUGIERES REDACTAR UN DOCUMENTO SI ES NECESARIO)."
     )
     return plantilla_semaforo
+
 
 
 @tool

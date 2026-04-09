@@ -1,6 +1,7 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
+from langsmith import traceable
 
 from app.core.config import settings
 
@@ -9,7 +10,11 @@ from app.core.config import settings
 class KSelector(BaseModel):
     k_value: int = Field(description="Number of fragments to retrieve, between 1 and 10")
 
-
+@traceable(
+    name="dynamic_retrieval",
+    tags=["retrieval", "dynamic-k"],
+    metadata={"component": "retriever"}
+)
 def recuperar_contexto_dinamico(pregunta: str, vectorstore):
     # 2. Instanciamos Groq (requiere GROQ_API_KEY en tu .env)
     llm_groq = ChatGroq(model="llama-3.1-8b-instant", temperature=0, api_key=settings.GROQ_API_KEY)
@@ -51,7 +56,7 @@ def recuperar_contexto_dinamico(pregunta: str, vectorstore):
 
     return documentos_recuperados
 
-
+@traceable(name="format_context_for_gemini")
 def formatear_documentos_para_gemini(documentos_recuperados) -> str:
     """Convierte los documentos de ChromaDB en un string formateado con citas."""
     texto_final = "CONTEXTO RECUPERADO DE LA BASE DE DATOS LEGAL:\n\n"

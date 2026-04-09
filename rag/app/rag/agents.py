@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
+
 import google.api_core.exceptions
 from google import genai
 from google.genai import types
@@ -34,10 +35,13 @@ from langchain_chroma import Chroma
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_groq import ChatGroq
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph, add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
+
 
 from app.api.schemas import ChatResponse, Citation, EvalMetrics, QueryTransformTrace, Trace
 from app.core.config import settings
@@ -258,7 +262,7 @@ classifier_chain = CLASSIFIER_PROMPT | gemini_LLM.with_structured_output(Classif
 # Self-critique chain: evaluates answer quality on three dimensions (structured output)
 self_critique_chain = SELF_CRITIQUE_PROMPT | gemini_LLM.with_structured_output(SelfCritiqueOutput)
 
-
+@traceable(name="1_classifier_node", tags=["classifier"])
 def classifier_node(state: GraphState):
     question = state["messages"][-1].content
 
@@ -290,7 +294,7 @@ def classifier_node(state: GraphState):
     classification_result = classifier_chain.invoke({"question": question, "historial": historial})
     return {"question": classification_result.question, "intent": classification_result.intent}
 
-
+@traceable(name="3e_general_search_node", tags=["groq", "general"])
 def general_search_node(state: GraphState):
     """
     Respuestas generales usando Groq.
@@ -300,7 +304,7 @@ def general_search_node(state: GraphState):
     print(f"{_RED}[DEBUG]: general_search_node (Groq) - Response ready{_RESET}")
     return {"messages": [res]}
 
-
+@traceable(name="3a_domain_search_node", tags=["agent", "domain-search"])
 def domain_search_node(state: GraphState):
     """
     Nodo ReAct para búsqueda de información específica en el dominio legal.
@@ -367,7 +371,7 @@ def domain_search_node(state: GraphState):
 
     return {"messages": [AIMessage(content=agent_response)]}
 
-
+@traceable(name="3b_summarize_node", tags=["agent", "summarize"])
 def summarize_node(state: GraphState):
     """
     Nodo ReAct para generar resúmenes de temas legales.
@@ -420,7 +424,7 @@ def summarize_node(state: GraphState):
 
     return {"messages": [AIMessage(content=agent_response)]}
 
-
+@traceable(name="3c_compare_node", tags=["agent", "compare"])
 def compare_node(state: GraphState):
     """
     Nodo ReAct para comparar conceptos legales.
@@ -471,7 +475,7 @@ def compare_node(state: GraphState):
 
     return {"messages": [AIMessage(content=agent_response)]}
 
-
+@traceable(name="2_rag_node", tags=["retrieval", "query-transform"])
 def rag_node(state: GraphState):
     """
     Retrieval-only node with adaptive query transformation.
@@ -536,7 +540,19 @@ def rag_node(state: GraphState):
                 print(f"{_RED}[DEBUG]: rag_node - GraphDB returned no results{_RESET}")
         except Exception as exc:
             print(f"{_RED}[DEBUG]: rag_node - GraphDB query failed: {exc}{_RESET}")
-
+    #------------------------------------------
+    if contexto_grafo:
+        from langsmith import get_current_run_tree
+        run = get_current_run_tree()
+        if run:
+            run.metadata.update({
+                "graphdb_results_count": len(graph_result.get("results", [])),
+                "graphdb_source": graph_result.get("source", ""),
+                "sparql_query_preview": str(graph_result.get("sparql_query", ""))[:300],
+                "vector_docs_count": len(all_docs),
+                "query_strategy": transform_result.strategy.value,
+                "retry_count": retry_count,
+            })
     # 4. Build citations
     citations_list = []
     for doc in all_docs:
@@ -560,7 +576,7 @@ def rag_node(state: GraphState):
         "query_transform": transform_result.model_dump(),
     }
 
-
+@traceable(name="4_validate_node", tags=["validation", "critic", "self-critique"])
 def validate_node(state: GraphState):
     """
     Reflection node: evaluates the generated answer on three quality dimensions
@@ -628,6 +644,18 @@ def validate_node(state: GraphState):
                 "answer": answer[:3000],
             }
         )
+        from langsmith import get_current_run_tree
+        run = get_current_run_tree()
+        if run:
+            run.metadata.update({
+                "addresses_question": critique_result.addresses_question,
+                "is_complete": critique_result.is_complete,
+                "is_grounded": critique_result.is_grounded,
+                "is_valid": critique_result.is_valid,
+                "attempt_number": current_retry_count + 1,
+                "intent": intent,
+                "critique_summary": critique_result.critique[:200] if critique_result.critique else "",
+            })
 
         is_valid = critique_result.is_valid
 
@@ -704,7 +732,7 @@ def validate_node(state: GraphState):
         "validation_suggested_improvement": new_improvement,
     }
 
-
+@traceable(name="3d_draft_document_node", tags=["agent", "draft"])
 def draft_document_node(state: GraphState):
     print(f"{_RED}[DEBUG]: draft_document_node (ReAct){_RESET}")
     question = state["question"]
@@ -796,7 +824,7 @@ def rag_route(
     elif intent == "draftDocument":
         return "draft_document_node"
 
-
+@traceable(name="3f_fallback_node", tags=["fallback", "google_search"])
 def fallback_node(state: GraphState):
     """
     Fallback node: activated after MAX_ATTEMPTS failed self-critiques.
@@ -920,7 +948,11 @@ def _is_model_unavailable_error(exc: Exception) -> bool:
         )
     )
 
-
+@traceable(
+    name="ask_chat",
+    tags=["entry-point"],
+    metadata={"component": "agents"}
+)
 def ask_chat(question: str, settings: Settings, conversation_id: str = "conversation_1"):
     if conversation_id is None:
         conversation_id = "conversation_1"
@@ -931,6 +963,8 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
     # Ejecutamos el grafo y capturamos TODO el estado final
     try:
         state_output = chat.invoke(initial_messages, config=config)
+        run_tree = get_current_run_tree()
+        langsmith_run_id = str(run_tree.id) if run_tree else None
     except Exception as exc:
         if _is_model_unavailable_error(exc):
             print(f"{_RED}[DEBUG]: ask_chat - Model unavailable: {exc}{_RESET}")
@@ -1018,9 +1052,35 @@ def ask_chat(question: str, settings: Settings, conversation_id: str = "conversa
             f"MRR={ret_metrics.mrr if ret_metrics else 'n/a'}, "
             f"nDCG={ret_metrics.ndcg_at_k if ret_metrics else 'n/a'}, "
             f"relevance={gen_metrics.relevance.score if gen_metrics else 'n/a'}, "
-            f"faithfulness={gen_metrics.faithfulness.score if gen_metrics else 'n/a'}{_RESET}"
-        )
+            f"faithfulness={gen_metrics.faithfulness.score if gen_metrics else 'n/a'}{_RESET}")
+        if eval_metrics and langsmith_run_id:
+            from langsmith import Client
+            ls_client = Client()
 
+            feedback_scores = {}
+            if eval_metrics.retrieval:
+                feedback_scores.update({
+                    "precision_at_k": eval_metrics.retrieval.precision_at_k,
+                    "mrr":            eval_metrics.retrieval.mrr,
+                    "ndcg_at_k":      eval_metrics.retrieval.ndcg_at_k,
+                })
+            if eval_metrics.generation:
+                feedback_scores.update({
+                    "relevance":    eval_metrics.generation.relevance.score,
+                    "faithfulness": eval_metrics.generation.faithfulness.score,
+                })
+
+            for key, score in feedback_scores.items():
+                if score is not None:
+                    ls_client.create_feedback(
+                        run_id=langsmith_run_id,
+                        key=key,
+                        score=float(score),
+                        source_info={"component": "eval_metrics"},
+                    )
+
+            
+    request_id = langsmith_run_id or f"req-{uuid.uuid4().hex[:8]}-{conversation_id}"
     return ChatResponse(
         ok=True,
         request_id=request_id,

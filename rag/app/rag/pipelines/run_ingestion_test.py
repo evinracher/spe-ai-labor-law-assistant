@@ -24,6 +24,7 @@ Then point the server at the test database by setting in .env:
 import glob
 import os
 import sys
+import time
 
 from dotenv import load_dotenv
 
@@ -81,28 +82,42 @@ def procesar_pdf_rapido(ruta_archivo: str) -> list:
 
 
 def crear_indice_vectorial_test(chunks: list) -> None:
-    """Embed chunks with Google embedding-001 and persist to TEST_CHROMA_DIR."""
+    """Embed chunks con Google en lotes para evitar el error 429."""
     chunks_validos = [c for c in chunks if c.page_content and c.page_content.strip()]
-    descartados = len(chunks) - len(chunks_validos)
-    print(f"🧹 Chunks descartados (vacíos): {descartados}")
-    print(f"🚀 Enviando {len(chunks_validos)} chunks a la API de Google...")
-
+    total = len(chunks_validos)
+    
     google_key = os.getenv("GOOGLE_API_KEY")
-    if not google_key:
-        raise ValueError("GOOGLE_API_KEY no está configurada en el entorno")
-
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/gemini-embedding-001",
         task_type="RETRIEVAL_DOCUMENT",
         google_api_key=google_key,
     )
 
-    Chroma.from_documents(
-        documents=chunks_validos,
-        embedding=embeddings,
-        persist_directory=TEST_CHROMA_DIR,
-    )
+    # Configuración de lotes (Batches)
+    # Enviamos 80 para estar seguros bajo el límite de 100
+    batch_size = 80 
+    print(f"🚀 Procesando {total} chunks en lotes de {batch_size}...")
 
+    for i in range(0, total, batch_size):
+        batch = chunks_validos[i : i + batch_size]
+        
+        # En el primer lote creamos la DB, en los siguientes añadimos (add_documents)
+        if i == 0:
+            vector_db = Chroma.from_documents(
+                documents=batch,
+                embedding=embeddings,
+                persist_directory=TEST_CHROMA_DIR,
+            )
+        else:
+            vector_db.add_documents(documents=batch)
+        
+        progreso = min(i + batch_size, total)
+        print(f"✅ Progreso: {progreso}/{total} guardados.")
+
+        # Si aún quedan lotes, esperamos 60 segundos para resetear la cuota de Google
+        if progreso < total:
+            print("⏳ Esperando 60 segundos para evitar bloqueo de cuota de Google...")
+            time.sleep(60)
 
 def main() -> None:
     print(f"📂 Directorio de test: {TEST_DATA_DIR}")

@@ -12,13 +12,21 @@ Or via the helper script in pyproject.toml:
 from __future__ import annotations
 
 import logging
+import os
 import sys
+
+from app.core.config import settings
+
+# Set LangChain environment variables before importing any LangChain modules
+os.environ['LANGCHAIN_TRACING_V2'] = settings.LANGCHAIN_TRACING_V2
+os.environ['LANGCHAIN_ENDPOINT'] = settings.LANGCHAIN_ENDPOINT
+os.environ['LANGCHAIN_API_KEY'] = settings.LANGCHAIN_API_KEY
+os.environ['LANGCHAIN_PROJECT'] = settings.LANGCHAIN_PROJECT
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
-from app.core.config import settings
 from app.db.chroma import get_chroma_client
 
 # ---------------------------------------------------------------------------
@@ -30,6 +38,10 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
+
+# Enable debug logging for LangSmith and LangChain to capture trace errors
+logging.getLogger('langsmith').setLevel(logging.DEBUG)
+logging.getLogger('langchain').setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +64,7 @@ app = FastAPI(
     redoc_url="/redoc" if settings.ENV == "dev" else None,
     openapi_url="/openapi.json" if settings.ENV == "dev" else None,
 )
+
 
 # ---------------------------------------------------------------------------
 # CORS — permissive for local development.
@@ -97,28 +110,6 @@ async def on_startup() -> None:  # (async is intentional)
     app.state.collection = collection
 
     logger.info("ChromaDB ready | collection=%s | docs=%d", collection.name, collection.count())
-
-    # GraphDB / Knowledge Graph connectivity check
-    if settings.GRAPHDB_ENABLED:
-        try:
-            from app.db.graphdb import execute_sparql
-
-            test_result = execute_sparql("SELECT (1 AS ?alive) WHERE {}")
-            if test_result:
-                logger.info(
-                    "GraphDB ready | url=%s | repository=%s",
-                    settings.GRAPHDB_URL,
-                    settings.GRAPHDB_REPOSITORY,
-                )
-            else:
-                logger.warning(
-                    "GraphDB reachable but returned empty test result | url=%s",
-                    settings.GRAPHDB_URL,
-                )
-        except Exception as exc:
-            logger.warning("GraphDB not reachable (KG retrieval will be unavailable): %s", exc)
-    else:
-        logger.info("GraphDB disabled (GRAPHDB_ENABLED=false)")
     # TODO (milestone 3): warm up sentence-transformers model on startup.
 
 

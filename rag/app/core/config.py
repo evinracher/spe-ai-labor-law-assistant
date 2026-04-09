@@ -83,7 +83,15 @@ class Settings(BaseSettings):
         ),
     )
 
-    # ------------------------------------------------------------ GraphDB / KG
+    #  ---------------------------------------------------------------LangSmith
+    LANGCHAIN_TRACING_V2: str = "false"
+    LANGCHAIN_ENDPOINT: str = "https://api.smith.langchain.com"
+    LANGCHAIN_API_KEY: str = ""
+    LANGCHAIN_PROJECT: str = "AgenticLawyer"
+
+    model_config = SettingsConfigDict(env_file=".env")
+    
+# ------------------------------------------------------------ GraphDB / KG
     GRAPHDB_URL: str = Field(
         default="http://localhost:7200",
         description="Base URL of the GraphDB instance.",
