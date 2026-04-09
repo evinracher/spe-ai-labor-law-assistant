@@ -327,10 +327,11 @@ def domain_search_node(state: GraphState):
         f"1. Si el contexto proporcionado es SUFICIENTE para responder, genera la respuesta directamente\n"
         f"2. Si necesitas información MÁS ESPECÍFICA (ley exacta, artículo, jurisprudencia), usa las herramientas\n"
         f"3. Si necesitas datos ESTRUCTURADOS sobre empleados, contratos, salarios o empresas, usa la herramienta 'query_knowledge_graph'\n"
-        f"4. Cita las fuentes exactas (Ley X, Artículo Y)\n"
-        f"5. Responde SIEMPRE en español\n"
-        f"6. Si notas abuso laboral, o riesgos laborales y/o legales, usa la herramienta 'evaluar_riesgo_laboral' e incluye el semáforo al final.\n"
-        f"7. NUNCA redactes documentos legales completos aquí. Solo SUGIERE al usuario: 'Si deseas, puedo ayudarte a redactar un documento legal, solo pídeme que lo genere'."
+        f"4. Cuando vayas a dar un EJEMPLO de un concepto legal (contrato laboral, prestación de servicios, jornada, salario, etc.), usa 'query_knowledge_graph' para obtener datos REALES de la ontología e ilustrar con casos concretos\n"
+        f"5. Cita las fuentes exactas (Ley X, Artículo Y)\n"
+        f"6. Responde SIEMPRE en español\n"
+        f"7. Si notas abuso laboral, o riesgos laborales y/o legales, usa la herramienta 'evaluar_riesgo_laboral' e incluye el semáforo al final.\n"
+        f"8. NUNCA redactes documentos legales completos aquí. Solo SUGIERE al usuario: 'Si deseas, puedo ayudarte a redactar un documento legal, solo pídeme que lo genere'."
     )
 
     # On retries, append critique so the agent knows exactly what to improve
@@ -386,7 +387,8 @@ def summarize_node(state: GraphState):
         f"SOLICITUD: {question}\n\n"
         f"Genera un resumen estructurado. Si el contexto es suficiente, úsalo directamente. "
         f"Si necesitas más detalle de artículos específicos, usa las herramientas. "
-        f"Si necesitas datos estructurados (empleados, contratos, salarios), usa 'query_knowledge_graph'."
+        f"Si necesitas datos estructurados (empleados, contratos, salarios), usa 'query_knowledge_graph'. "
+        f"Cuando expliques un concepto, usa 'query_knowledge_graph' para incluir EJEMPLOS REALES de la ontología que ilustren el concepto."
     )
 
     if validation_critique and retry_count > 0:
@@ -438,7 +440,8 @@ def compare_node(state: GraphState):
         f"SOLICITUD DE COMPARACIÓN: {question}\n\n"
         f"Compara los conceptos solicitados. Si el contexto tiene la información, úsalo. "
         f"Si necesitas artículos específicos de cada concepto, usa las herramientas. "
-        f"Si necesitas datos estructurados para la comparación (ej: contratos, salarios), usa 'query_knowledge_graph'."
+        f"Si necesitas datos estructurados para la comparación (ej: contratos, salarios), usa 'query_knowledge_graph'. "
+        f"Ilústra cada concepto con EJEMPLOS REALES de la ontología usando 'query_knowledge_graph'."
     )
 
     if validation_critique and retry_count > 0:
@@ -664,17 +667,30 @@ def validate_node(state: GraphState):
         )
         has_content = len(answer.strip()) > 50
         legal_terms = ["artículo", "ley", "decreto", "código", "art.", "numeral"]
+        kg_terms = [
+            "contrato",
+            "empleado",
+            "empleador",
+            "salario",
+            "empresa",
+            "jornada",
+            "beneficio",
+            "departamento",
+            "contratista",
+            "prestación",
+        ]
         has_legal_reference = any(term in answer.lower() for term in legal_terms)
-        is_valid = has_content and has_legal_reference
+        has_kg_reference = any(term in answer.lower() for term in kg_terms)
+        is_valid = has_content and (has_legal_reference or has_kg_reference)
         new_critique = (
             ""
             if is_valid
-            else "La respuesta carece de referencias legales específicas o es demasiado breve."
+            else "La respuesta carece de referencias legales o datos estructurados específicos, o es demasiado breve."
         )
         new_improvement = (
             ""
             if is_valid
-            else "Incluye citas legales concretas (artículo, ley o decreto) que respalden la respuesta."
+            else "Incluye citas legales concretas o datos del knowledge graph que respalden la respuesta."
         )
 
     print(
