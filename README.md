@@ -4,7 +4,13 @@ An intelligent chatbot powered by Retrieval-Augmented Generation (RAG) that prov
 
 ## 📋 Overview
 
-This project implements a conversational AI assistant specialized in Colombian labor legislation. Using RAG technology and intelligent intent classification, the chatbot can:
+This project implements a conversational AI assistant specialized in Colombian labor legislation, developed for the *Ontology Engineering* course at UNAL. It combines three modern AI paradigms:
+
+- **RAG** (Retrieval-Augmented Generation) — answers grounded in real legal documents via ChromaDB vector search
+- **Knowledge Graphs** — structured OWL ontology + GraphDB for relationship-aware SPARQL queries (supplementary)
+- **ReAct Agents** (LangGraph) — LLM autonomously decides which tools to call per query
+
+The chatbot can:
 - **Answer labor law questions**: Retrieves relevant legal information from a curated knowledge base and generates accurate, contextual responses about labor rights, employment regulations, and legal procedures in Colombia.
 - **Answer general questions**: Handles general queries outside the labor law domain using a general-purpose language model.
 
@@ -27,37 +33,46 @@ A full walkthrough of the assistant in action is available as a screen recording
 ## ✨ Features
 
 - 💬 Interactive chat interface for labor law queries and general questions
-- 🧠 Intelligent intent classification (labor law vs. general questions)
-- 🔍 RAG-based retrieval of relevant legal documents and articles for labor law queries
-- 🌐 General question answering capabilities using state-of-the-art language models
-- 📚 Knowledge base of Colombian labor legislation
-- 🎯 Contextual responses with legal references and citations
-- 💾 Conversation history management across sessions
+- 🧠 Intelligent 5-category intent classification via Gemini structured output
+- 🔍 Dual retrieval: ChromaDB vector search (MMR) + GraphDB SPARQL for structured data
+- 🔀 Adaptive query transformation: DIRECT, HyDE, or DECOMPOSITION strategies
+- 🤖 ReAct agents with least-privilege tool sets (10 specialized legal tools)
+- ✅ Self-critique reflection loop — up to 3 retry attempts before fallback
+- 🌐 Fallback to Gemini Google Search grounding when internal KB is insufficient
+- 📚 Knowledge base of Colombian labor legislation (CST, Ley 789, and more)
+- 🎯 Contextual responses with legal citations and structured traceability
+- 💾 Multi-turn conversation memory via LangGraph `InMemorySaver` checkpointer
 - 🔄 Real-time chat interface with modern UI components
 
 ## 🏗️ Architecture
 
 The system consists of:
-- **Intent Classifier**: Uses LangGraph to classify user questions as labor law queries or general questions
-- **Multi-node Agent Flow**: Routes labor-law queries through specialized nodes (`domainSearch`, `summarize`, `compare`, `draftDocument`) and validation
-- **RAG Pipeline**: For labor law queries, performs dynamic retrieval from ChromaDB and generates grounded answers with citations
-- **General Q&A**: Handles general questions with direct LLM responses
-- **Vector Database**: Stores embeddings and legal chunks in persistent ChromaDB collections
-- **LLM Integration**: Generates natural language responses using Groq and Gemini APIs
-- **Legal Tools Layer**: Enables law/article lookup, jurisprudence support, citation checks, and labor-risk evaluation
+- **Intent Classifier**: Gemini with structured Pydantic output classifies queries into 5 intents: `domainSearch`, `summarize`, `compare`, `draftDocument`, `generalSearch`
+- **Multi-node Agent Flow** (LangGraph StateGraph): Routes queries through specialist ReAct nodes and a self-critique validation loop
+- **RAG Pipeline**: Adaptive query transformation (HyDE / Decomposition / Direct) + dynamic-K MMR retrieval from ChromaDB
+- **Dual Retrieval**: Vector search (ChromaDB) combined with structured SPARQL queries against GraphDB
+- **Specialist Nodes**: `domain_search_node` (6 tools), `summarize_node` (4 tools), `compare_node` (4 tools), `draft_document_node` (1 tool)
+- **Self-Critique Loop**: `validate_node` checks answers on 3 dimensions; retries up to 3 times with improved hints
+- **Fallback Node**: Activates Gemini's built-in Google Search grounding after exhausting retries
+- **General Q&A**: Handles off-domain questions via direct Groq/Llama response
+- **Vector Database**: Persistent ChromaDB with semantic chunking (percentile-85 threshold)
+- **LLM Integration**: Gemini (`gemini-2.5-flash`) for reasoning-heavy tasks; Groq (`llama-3.1-8b-instant`) for fast structured tasks
+- **Legal Tools Layer**: 10 tools — law/article lookup, jurisprudence, citation verification, vigency checks, KG queries, risk evaluation, document drafting
 - **Chat Interface**: Modern React-based UI with TypeScript and Vite
-- **Conversation Memory**: In-memory conversation history with persistent conversation IDs
+- **Conversation Memory**: Multi-turn memory via LangGraph `InMemorySaver` checkpointer with persistent `thread_id`
 
 ## 🛠️ Tech Stack
 
 ### Backend
-- **LLM**: Groq (llama-3.1-8b-instant), with support for Google Gemini
-- **Framework**: LangGraph 0.2.0+ for AI agent workflows
-- **Vector Database**: ChromaDB (persistent local storage)
+- **Primary LLM**: Google Gemini (`gemini-2.5-flash`) — classification, generation, SPARQL generation, self-critique
+- **Secondary LLM**: Groq (`llama-3.1-8b-instant`) — dynamic-K selection, query transformation, general responses
+- **Embeddings**: `gemini-embedding-001` for semantic chunking, ingestion, and retrieval
+- **Framework**: LangGraph 0.2.0+ for StateGraph agent orchestration
+- **Vector Database**: ChromaDB (persistent local storage) with MMR retrieval
+- **Knowledge Graph**: GraphDB (RDF triple store, SPARQL endpoint) + OWL ontology (supplementary)
 - **Backend**: FastAPI with Uvicorn
 - **Programming Language**: Python 3.11+
-- **Embeddings**: Google Generative AI embeddings (`models/gemini-embedding-001`) for ingestion/retrieval, with configurable provider support
-- **Additional Libraries**: Pydantic, LangChain, httpx
+- **Additional Libraries**: Pydantic v2, LangChain, langchain-experimental (`SemanticChunker`), SPARQLWrapper, rdflib, pypdf
 
 ### Frontend
 - **Framework**: React 18 with TypeScript
@@ -68,9 +83,9 @@ The system consists of:
 
 ## 📚 Data Sources
 
-- Colombian Labor Code (Código Sustantivo del Trabajo)
-- Complementary Colombian labor norms and legal documents ingested from the project corpus
-- Document processing pipeline: PDF extraction, cleaning, semantic chunking, embeddings, and persistent indexing in ChromaDB
+- Colombian Labor Code (Código Sustantivo del Trabajo — CST)
+- Ley 789 and other complementary Colombian labor legislation
+- Document processing pipeline: PDF extraction → text cleaning → semantic chunking (percentile-85 threshold) → `gemini-embedding-001` embeddings → persistent ChromaDB indexing
 
 ## 🚀 Getting Started
 
@@ -266,20 +281,24 @@ No license has been specified yet in this repository.
 
 ### Technical Features
 - [x] FastAPI backend with `GET /health` and `POST /chat`
-- [x] LangGraph-driven orchestration and intent classification
-- [x] Groq and Gemini provider integration
-- [x] Persistent ChromaDB vector storage
-- [x] Dynamic retrieval of legal context for RAG answers
-- [x] Legal-tool integration for law/article search, metadata, jurisprudence, and verification
+- [x] LangGraph StateGraph with multi-node orchestration and 5-category intent classification
+- [x] Dual LLM strategy: Gemini (reasoning) + Groq/Llama (fast structured tasks)
+- [x] Persistent ChromaDB vector storage with MMR retrieval
+- [x] Adaptive query transformation: DIRECT, HyDE, and DECOMPOSITION strategies
+- [x] Dynamic-K retrieval selection (1–10 chunks) based on query complexity
+- [x] 10 legal tools with least-privilege assignment per agent node
+- [x] SPARQL-based knowledge graph retrieval via GraphDB (supplementary structured data)
+- [x] Self-critique validation loop with up to 3 retry attempts and improvement hints
+- [x] Fallback to Gemini Google Search grounding on validation failure
 - [x] PDF ingestion pipeline with cleaning, semantic chunking, and vector indexing
-- [x] Request/response validation with Pydantic models and execution trace support
+- [x] Request/response validation with Pydantic v2 models and execution trace support
 
 ### Architectural Features
-- [x] Intent-based routing between legal-domain and general-question flows
-- [x] Multi-node legal workflow (`domainSearch`, `summarize`, `compare`, `draftDocument`)
-- [x] Validation step before final response delivery
-- [x] Citation-aware answer generation for legal queries
-- [x] Conversation thread continuity through persistent conversation IDs
+- [x] Intent-based routing into 5 flows: `domainSearch`, `summarize`, `compare`, `draftDocument`, `generalSearch`
+- [x] Specialist ReAct nodes with tool access scoped by task type
+- [x] Reflective agent pattern: `validate_node` evaluates grounding, completeness, and relevance
+- [x] Citation-aware answer generation with legal article references
+- [x] Multi-turn conversation memory via `InMemorySaver` checkpointer and persistent `thread_id`
 - [x] Decoupled frontend/backend architecture (React + FastAPI)
 
 ## 📧 Contact

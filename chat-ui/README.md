@@ -5,12 +5,13 @@ A modern React-based chat interface for the AI Labor Law Assistant. This applica
 
 ## 🎨 Features
 
-- 💬 Real-time chat interface with message bubbles
+- 💬 Real-time chat interface with message bubbles and inline **bold** markdown rendering
 - 🎯 Seamless integration with the RAG backend API
 - 💾 Persistent conversation history using localStorage
 - 🎨 Modern UI with Radix UI and Material-UI components
 - 📱 Responsive design for desktop and mobile
-- 🌙 Support for theming with next-themes
+- 📚 Collapsible citations panel with links to legal source documents
+- ⚙️ Collapsible workflow trace panel showing backend execution steps, tool calls, and validation results
 - ⚡ Fast development with Vite and Hot Module Replacement (HMR)
 
 ## 🛠️ Tech Stack
@@ -50,7 +51,7 @@ npm install
 
 ### Configuration
 
-Create a `.env` file in the `chat-ui/` directory:
+Create a `.env.local` file in the `chat-ui/` directory:
 
 ```env
 # Backend API URL
@@ -87,18 +88,28 @@ chat-ui/
 ├── src/
 │   ├── app/
 │   │   ├── App.tsx              # Main application component
-│   │   ├── types.ts             # TypeScript type definitions
+│   │   ├── types.ts             # TypeScript type definitions (Message, Citation, WorkflowTrace…)
+│   │   ├── utils/
+│   │   │   └── sourceLinks.ts   # Citation source → display name / GitHub URL helpers
 │   │   └── components/
 │   │       ├── figma/           # Figma-imported components
-│   │       └── ui/              # Reusable UI components
+│   │       └── ui/
+│   │           ├── header.tsx               # Fixed app bar with logo and clear-chat button
+│   │           ├── message-bubble.tsx       # Chat bubble with markdown and CitationsPanel
+│   │           ├── citations-panel.tsx      # Collapsible legal sources panel
+│   │           ├── workflow-trace-panel.tsx # Collapsible backend execution trace panel
+│   │           ├── empty-state.tsx          # Illustration shown before first message
+│   │           └── app-snackbar.tsx         # Error/success snackbar
 │   ├── services/
-│   │   └── chatService.ts       # API client for backend
+│   │   └── chatService.ts       # API client for backend + conversation ID management
 │   ├── mocks/
 │   │   └── mockService.ts       # Mock responses for development
 │   └── styles/
 │       ├── index.css            # Global styles
+│       ├── fonts.css            # Font imports
 │       ├── tailwind.css         # Tailwind imports
 │       ├── theme.css            # Theme variables
+│       ├── colors.ts            # Shared color tokens (COLORS object)
 │       └── muiTheme.ts          # Material-UI theme
 ├── index.html                    # HTML entry point
 ├── vite.config.ts               # Vite configuration
@@ -118,9 +129,9 @@ The chat interface communicates with the backend API through the `chatService.ts
     "max_citations": "number (optional)"
   }
   ```
-- **Response**: Returns the answer, citations, and trace information
+- **Response**: Returns the answer, citations, trace (intent, top_k, vector_db, llm_provider), and optional workflow_trace
 
-Conversation IDs are automatically generated and stored in localStorage to maintain conversation context across sessions.
+Conversation IDs are automatically generated via `crypto.randomUUID()` and stored in localStorage to maintain conversation context across sessions.
 
 ## 🎨 Design
 
