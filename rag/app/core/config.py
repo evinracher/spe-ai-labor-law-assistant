@@ -89,9 +89,7 @@ class Settings(BaseSettings):
     LANGCHAIN_API_KEY: str = ""
     LANGCHAIN_PROJECT: str = "AgenticLawyer"
 
-    model_config = SettingsConfigDict(env_file=".env")
-    
-# ------------------------------------------------------------ GraphDB / KG
+    # ------------------------------------------------------------ GraphDB / KG
     GRAPHDB_URL: str = Field(
         default="http://localhost:7200",
         description="Base URL of the GraphDB instance.",

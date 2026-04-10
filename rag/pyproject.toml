@@ -62,6 +62,9 @@ dependencies = [
     "sentence-transformers>=3.0.0",      # Required by langchain-huggingface
     "langsmith>=0.1.0",
 
+    # --- Google GenAI SDK (new unified client: google.genai) ---
+    "google-genai>=1.0.0",               # Required for `from google import genai`
+
     # --- Knowledge Graph (GraphDB / SPARQL) ---
     "SPARQLWrapper>=2.0.0",              # SPARQL endpoint client for GraphDB
     "rdflib>=7.0.0"                     # RDF graph parsing and manipulation
