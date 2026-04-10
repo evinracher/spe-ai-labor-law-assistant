@@ -66,6 +66,10 @@ class Settings(BaseSettings):
         default=None,
         description="Google Gemini API key. Required when LLM_PROVIDER='gemini'.",
     )
+    GOOGLE_GEMINI_MODEL: str = Field(
+        default="gemini-2.5-flash-lite",
+        description="Gemini model name to use for answer generation.",
+    )
     GROQ_API_KEY: str | None = Field(
         default=None,
         description="Groq API key. Required when LLM_PROVIDER='groq'.",
