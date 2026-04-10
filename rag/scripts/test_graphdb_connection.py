@@ -85,6 +85,165 @@ def _run_update(g: ConjunctiveGraph, update: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Inference tests
+# ---------------------------------------------------------------------------
+
+
+def _test_inference(g: ConjunctiveGraph) -> int:
+    """Run 5 OWL/RDFS inference tests against GraphDB.
+
+    Each test demonstrates a triple that exists ONLY because GraphDB's
+    reasoner materialised it from the ontology axioms.  The repository must
+    use an OWL ruleset (e.g. OWL2-RL-Optimized or OWL-Horst-Optimized)
+    for any of these queries to return results.
+    """
+    failures = 0
+
+    # ── Inference Test 1: owl:equivalentClass — TrabajadorVinculado ────────
+    # :TrabajadorVinculado is defined as owl:equivalentClass of the
+    # intersection of :Empleado and (owl:someValuesFrom :ContratoLaboral on
+    # :tieneContrato).  No instance is ever explicitly typed as
+    # :TrabajadorVinculado in the data; GraphDB infers rdf:type
+    # :TrabajadorVinculado for every qualifying individual automatically.
+    _header("I-1. Inference \u2014 owl:equivalentClass  (TrabajadorVinculado)")
+    try:
+        q = """
+            PREFIX : <http://example.org/contratos#>
+            SELECT ?persona
+            WHERE {
+                ?persona a :TrabajadorVinculado .
+            }
+        """
+        rows = _run_select(g, q)
+        if rows:
+            print(f"  Individuals inferred as :TrabajadorVinculado ({len(rows)}):")
+            for r in rows:
+                print(f"    \u2022 {r.get('persona', '').replace(_BASE, ':')}")
+            print(f"  {PASS}  owl:equivalentClass inference confirmed.")
+        else:
+            print(f"  {WARN}  No :TrabajadorVinculado individuals found.")
+            print("         Ensure the repository ruleset is OWL2-RL and instances are loaded.")
+    except Exception as exc:
+        print(f"  {FAIL}  Query failed: {exc}")
+        failures += 1
+
+    # ── Inference Test 2: rdfs:subClassOf — Empleado → Persona ─────────────
+    # The ontology declares :Empleado rdfs:subClassOf :Persona.
+    # Because no instance is explicitly typed as :Persona in the data,
+    # every result below is an inferred triple produced by RDFS subclass
+    # propagation in the reasoner.
+    _header("I-2. Inference \u2014 rdfs:subClassOf  (Empleado \u2192 Persona)")
+    try:
+        q = """
+            PREFIX : <http://example.org/contratos#>
+            SELECT ?persona ?nombre
+            WHERE {
+                ?persona a :Persona .
+                OPTIONAL { ?persona :nombreCompleto ?nombre . }
+            }
+        """
+        rows = _run_select(g, q)
+        if rows:
+            print(f"  Individuals inferred as :Persona ({len(rows)}):")
+            for r in rows:
+                label = r.get("nombre", "")
+                p = r.get("persona", "").replace(_BASE, ":")
+                print(f"    \u2022 {p}  {f'({label})' if label else ''}")
+            print(f"  {PASS}  rdfs:subClassOf Empleado\u2192Persona inference confirmed.")
+        else:
+            print(f"  {WARN}  No :Persona individuals found (check ruleset and instances).")
+    except Exception as exc:
+        print(f"  {FAIL}  Query failed: {exc}")
+        failures += 1
+
+    # ── Inference Test 3: rdfs:subClassOf chain — Empleador → Contratante ──
+    # :Empleador rdfs:subClassOf :Contratante is declared in the ontology.
+    # RDFS chained subclass propagation means every :Empleador individual is
+    # also inferred as :Contratante without any explicit rdf:type assertion.
+    _header("I-3. Inference \u2014 rdfs:subClassOf chain  (Empleador \u2192 Contratante)")
+    try:
+        q = """
+            PREFIX : <http://example.org/contratos#>
+            SELECT ?contratante ?nombre
+            WHERE {
+                ?contratante a :Contratante .
+                OPTIONAL { ?contratante :nombreCompleto ?nombre . }
+            }
+        """
+        rows = _run_select(g, q)
+        if rows:
+            print(f"  Individuals inferred as :Contratante ({len(rows)}):")
+            for r in rows:
+                label = r.get("nombre", "")
+                c = r.get("contratante", "").replace(_BASE, ":")
+                print(f"    \u2022 {c}  {f'({label})' if label else ''}")
+            print(f"  {PASS}  Empleador\u2192Contratante subClassOf inference confirmed.")
+        else:
+            print(f"  {WARN}  No :Contratante individuals found (check ruleset and instances).")
+    except Exception as exc:
+        print(f"  {FAIL}  Query failed: {exc}")
+        failures += 1
+
+    # ── Inference Test 4: owl:inverseOf — empleaA ↔ esEmpleadoDe ───────────
+    # :empleaA owl:inverseOf :esEmpleadoDe is declared in the ontology.
+    # Only :empleaA (Empleador \u2192 Empleado) triples are stored explicitly.
+    # GraphDB infers the reverse :esEmpleadoDe (Empleado \u2192 Empleador) triple
+    # for every existing :empleaA assertion, without any explicit statement.
+    _header("I-4. Inference \u2014 owl:inverseOf  (empleaA \u2194 esEmpleadoDe)")
+    try:
+        q = """
+            PREFIX : <http://example.org/contratos#>
+            SELECT ?empleado ?empleador
+            WHERE {
+                ?empleado :esEmpleadoDe ?empleador .
+            }
+        """
+        rows = _run_select(g, q)
+        if rows:
+            print(f"  Inverse property triples inferred ({len(rows)}):")
+            for r in rows:
+                emp = r.get("empleado", "").replace(_BASE, ":")
+                empl = r.get("empleador", "").replace(_BASE, ":")
+                print(f"    \u2022 {emp}  :esEmpleadoDe  {empl}")
+            print(f"  {PASS}  owl:inverseOf empleaA\u2194esEmpleadoDe inference confirmed.")
+        else:
+            print(f"  {WARN}  No :esEmpleadoDe triples found (check ruleset and instances).")
+    except Exception as exc:
+        print(f"  {FAIL}  Query failed: {exc}")
+        failures += 1
+
+    # ── Inference Test 5: rdfs:subPropertyOf — empleaA → contrataA ─────────
+    # :empleaA rdfs:subPropertyOf :contrataA is declared in the ontology.
+    # RDFS sub-property propagation means every triple (X :empleaA Y) also
+    # yields (X :contrataA Y).  Only :empleaA assertions exist in the data;
+    # every :contrataA triple returned below is entirely inferred.
+    _header("I-5. Inference \u2014 rdfs:subPropertyOf  (empleaA \u2192 contrataA)")
+    try:
+        q = """
+            PREFIX : <http://example.org/contratos#>
+            SELECT ?empleador ?persona
+            WHERE {
+                ?empleador :contrataA ?persona .
+            }
+        """
+        rows = _run_select(g, q)
+        if rows:
+            print(f"  :contrataA triples inferred via subPropertyOf ({len(rows)}):")
+            for r in rows:
+                empl = r.get("empleador", "").replace(_BASE, ":")
+                p = r.get("persona", "").replace(_BASE, ":")
+                print(f"    \u2022 {empl}  :contrataA  {p}")
+            print(f"  {PASS}  rdfs:subPropertyOf empleaA\u2192contrataA inference confirmed.")
+        else:
+            print(f"  {WARN}  No :contrataA triples found (check ruleset and instances).")
+    except Exception as exc:
+        print(f"  {FAIL}  Query failed: {exc}")
+        failures += 1
+
+    return failures
+
+
+# ---------------------------------------------------------------------------
 # Pretty-print helpers
 # ---------------------------------------------------------------------------
 
@@ -312,6 +471,9 @@ def main() -> None:
     except Exception as exc:
         print(f"  {FAIL}  UPDATE DELETE DATA failed: {exc}")
         failures += 1
+
+    # ── Inference tests ──────────────────────────────────────────────
+    failures += _test_inference(g)
 
     _summary(failures)
     sys.exit(1 if failures else 0)
