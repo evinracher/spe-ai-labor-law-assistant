@@ -2,8 +2,8 @@
 scripts/test_graphdb_connection.py
 ----------------------------------
 Live connectivity and SPARQL test suite for the GraphDB instance configured
-in .env.  All queries are executed via RDFLib (ConjunctiveGraph +
-SPARQLUpdateStore), satisfying the following requirements:
+in .env.  All queries are executed via SPARQLWrapper, satisfying the
+following requirements:
 
   1. SELECT basic           — lists all OWL classes in the repository.
   2. SELECT + FILTER        — employees whose base salary exceeds a threshold.
@@ -28,8 +28,7 @@ from typing import Any
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from rdflib import ConjunctiveGraph  # noqa: E402
-from rdflib.plugins.stores.sparqlstore import SPARQLUpdateStore  # noqa: E402
+from SPARQLWrapper import BASIC, JSON, POST, POSTDIRECTLY, SPARQLWrapper  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 
@@ -48,40 +47,46 @@ WARN = f"{_YELLOW}⚠ WARN{_RESET}"
 
 
 # ---------------------------------------------------------------------------
-# RDFLib helpers
+# SPARQLWrapper helpers
 # ---------------------------------------------------------------------------
 
 
-def _build_graph() -> ConjunctiveGraph:
-    """Return a ConjunctiveGraph backed by GraphDB via SPARQLUpdateStore."""
-    query_ep = f"{settings.GRAPHDB_URL}/repositories/{settings.GRAPHDB_REPOSITORY}"
-    update_ep = f"{settings.GRAPHDB_URL}/repositories/{settings.GRAPHDB_REPOSITORY}/statements"
+def _build_sparql(*, update: bool = False) -> SPARQLWrapper:
+    """Return a configured SPARQLWrapper instance.
 
-    auth: tuple[str, str] | None = None
+    When *update* is True the wrapper targets the ``/statements`` endpoint
+    and uses POST so that INSERT/DELETE operations are accepted by GraphDB.
+    """
+    if update:
+        url = f"{settings.GRAPHDB_URL}/repositories/{settings.GRAPHDB_REPOSITORY}/statements"
+    else:
+        url = f"{settings.GRAPHDB_URL}/repositories/{settings.GRAPHDB_REPOSITORY}"
+
+    sparql = SPARQLWrapper(url)
+    sparql.setReturnFormat(JSON)
     if settings.GRAPHDB_USERNAME and settings.GRAPHDB_PASSWORD:
-        auth = (settings.GRAPHDB_USERNAME, settings.GRAPHDB_PASSWORD)
-
-    store = SPARQLUpdateStore(
-        queryEndpoint=query_ep,
-        update_endpoint=update_ep,
-        auth=auth,
-    )
-    return ConjunctiveGraph(store=store)
+        sparql.setHTTPAuth(BASIC)
+        sparql.setCredentials(settings.GRAPHDB_USERNAME, settings.GRAPHDB_PASSWORD)
+    return sparql
 
 
-def _run_select(g: ConjunctiveGraph, query: str) -> list[dict[str, Any]]:
+def _run_select(sparql: SPARQLWrapper, query: str) -> list[dict[str, Any]]:
     """Execute a SPARQL SELECT and return a list of {var: value} dicts."""
-    results = []
-    for row in g.query(query):
-        results.append(
-            {str(var): (str(val) if val is not None else None) for var, val in zip(row.labels, row)}
-        )
-    return results
+    sparql.setQuery(query)
+    sparql.setReturnFormat(JSON)
+    response = sparql.query().convert()
+    bindings: list[dict[str, Any]] = []
+    for row in response.get("results", {}).get("bindings", []):
+        bindings.append({var: row[var]["value"] for var in row})
+    return bindings
 
 
-def _run_update(g: ConjunctiveGraph, update: str) -> None:
-    """Execute a SPARQL UPDATE statement against the store."""
-    g.update(update)
+def _run_update(sparql_update: SPARQLWrapper, update: str) -> None:
+    """Execute a SPARQL UPDATE statement against the /statements endpoint."""
+    sparql_update.setQuery(update)
+    sparql_update.setMethod(POST)
+    sparql_update.setRequestMethod(POSTDIRECTLY)
+    sparql_update.query()
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +94,7 @@ def _run_update(g: ConjunctiveGraph, update: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _test_inference(g: ConjunctiveGraph) -> int:
+def _test_inference(sparql: SPARQLWrapper) -> int:
     """Run 5 OWL/RDFS inference tests against GraphDB.
 
     Each test demonstrates a triple that exists ONLY because GraphDB's
@@ -114,7 +119,7 @@ def _test_inference(g: ConjunctiveGraph) -> int:
                 ?persona a :TrabajadorVinculado .
             }
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print(f"  Individuals inferred as :TrabajadorVinculado ({len(rows)}):")
             for r in rows:
@@ -142,7 +147,7 @@ def _test_inference(g: ConjunctiveGraph) -> int:
                 OPTIONAL { ?persona :nombreCompleto ?nombre . }
             }
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print(f"  Individuals inferred as :Persona ({len(rows)}):")
             for r in rows:
@@ -170,7 +175,7 @@ def _test_inference(g: ConjunctiveGraph) -> int:
                 OPTIONAL { ?contratante :nombreCompleto ?nombre . }
             }
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print(f"  Individuals inferred as :Contratante ({len(rows)}):")
             for r in rows:
@@ -198,7 +203,7 @@ def _test_inference(g: ConjunctiveGraph) -> int:
                 ?empleado :esEmpleadoDe ?empleador .
             }
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print(f"  Inverse property triples inferred ({len(rows)}):")
             for r in rows:
@@ -226,7 +231,7 @@ def _test_inference(g: ConjunctiveGraph) -> int:
                 ?empleador :contrataA ?persona .
             }
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print(f"  :contrataA triples inferred via subPropertyOf ({len(rows)}):")
             for r in rows:
@@ -268,7 +273,7 @@ def _summary(failures: int) -> None:
 
 
 def main() -> None:
-    _header("GraphDB — SPARQL Test Suite with RDFLib")
+    _header("GraphDB — SPARQL Test Suite with SPARQLWrapper")
 
     print(f"  GRAPHDB_URL        = {settings.GRAPHDB_URL}")
     print(f"  GRAPHDB_REPOSITORY = {settings.GRAPHDB_REPOSITORY}")
@@ -281,13 +286,14 @@ def main() -> None:
 
     failures = 0
 
-    # ── Initialise RDFLib graph ─────────────────────────────────────
-    _header("0. Connection — SPARQLUpdateStore (RDFLib)")
+    # ── Initialise SPARQLWrapper endpoints ──────────────────────────
+    _header("0. Connection — SPARQLWrapper")
     try:
-        g = _build_graph()
-        print(f"  {PASS}  ConjunctiveGraph with SPARQLUpdateStore configured.")
+        sparql = _build_sparql(update=False)
+        sparql_update = _build_sparql(update=True)
+        print(f"  {PASS}  SPARQLWrapper endpoints configured.")
     except Exception as exc:
-        print(f"  {FAIL}  Could not initialise RDFLib graph: {exc}")
+        print(f"  {FAIL}  Could not initialise SPARQLWrapper: {exc}")
         _summary(1)
         sys.exit(1)
 
@@ -304,7 +310,7 @@ def main() -> None:
                 OPTIONAL { ?clase rdfs:label ?etiqueta . }
             }
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print(f"  Found {len(rows)} class(es):")
             for r in rows:
@@ -334,7 +340,7 @@ def main() -> None:
                 FILTER (?salarioBase >= 3000000)
             }
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print("  Employees with salary >= 3,000,000:")
             for r in rows:
@@ -362,7 +368,7 @@ def main() -> None:
             }
             ORDER BY DESC(?fechaInicio)
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             print(f"  {len(rows)} labor contract(s) found:")
             for r in rows:
@@ -388,7 +394,7 @@ def main() -> None:
             }
             LIMIT 5
         """
-        rows = _run_select(g, q)
+        rows = _run_select(sparql, q)
         if rows:
             for r in rows:
                 s = r.get("sujeto", "").replace(_BASE, ":")
@@ -415,7 +421,7 @@ def main() -> None:
                               :identificacion "TEST-001"^^xsd:string .
             }
         """
-        _run_update(g, insert_q)
+        _run_update(sparql_update, insert_q)
 
         # Verify the triple was actually inserted
         verify_q = """
@@ -426,7 +432,7 @@ def main() -> None:
                               :identificacion ?id .
             }
         """
-        rows = _run_select(g, verify_q)
+        rows = _run_select(sparql, verify_q)
         if rows:
             r = rows[0]
             print(f"  Triple inserted: name={r.get('nombre')}  id={r.get('id')}")
@@ -451,7 +457,7 @@ def main() -> None:
                               :identificacion "TEST-001"^^xsd:string .
             }
         """
-        _run_update(g, delete_q)
+        _run_update(sparql_update, delete_q)
 
         # Verify the triple was removed
         verify_q = """
@@ -461,7 +467,7 @@ def main() -> None:
                 :EmpleadoTest :nombreCompleto ?nombre .
             }
         """
-        rows = _run_select(g, verify_q)
+        rows = _run_select(sparql, verify_q)
         if not rows:
             print("  Triple :EmpleadoTest removed successfully.")
             print(f"  {PASS}  UPDATE DELETE DATA executed successfully.")
@@ -473,7 +479,7 @@ def main() -> None:
         failures += 1
 
     # ── Inference tests ──────────────────────────────────────────────
-    failures += _test_inference(g)
+    failures += _test_inference(sparql)
 
     _summary(failures)
     sys.exit(1 if failures else 0)
