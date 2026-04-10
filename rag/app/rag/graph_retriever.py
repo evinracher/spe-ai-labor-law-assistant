@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langsmith import traceable
 
 from app.core.config import settings
 from app.db.graphdb import execute_sparql
@@ -174,7 +175,11 @@ def _select_template(question: str) -> str | None:
 # Core public API
 # ---------------------------------------------------------------------------
 
-
+@traceable(
+    name="generate_sparql",
+    tags=["knowledge-graph", "sparql-generation"],
+    metadata={"component": "graph_retriever"}
+)
 def generate_sparql(question: str, llm: BaseChatModel) -> str | None:
     """Use the LLM to translate a natural-language question into SPARQL.
 
@@ -201,7 +206,11 @@ def generate_sparql(question: str, llm: BaseChatModel) -> str | None:
 
     return raw
 
-
+@traceable(
+    name="query_graph",
+    tags=["knowledge-graph", "graphdb"],
+    metadata={"component": "graph_retriever"}
+)
 def query_graph(question: str, llm: BaseChatModel) -> dict[str, Any]:
     """End-to-end knowledge graph retrieval.
 
@@ -238,7 +247,7 @@ def query_graph(question: str, llm: BaseChatModel) -> dict[str, Any]:
         "source": "graphdb",
     }
 
-
+@traceable(name="format_graph_results", tags=["knowledge-graph"])
 def format_graph_results(results: list[dict[str, Any]], sparql_query: str = "") -> str:
     """Format SPARQL result bindings into a readable context block for the LLM."""
     if not results:

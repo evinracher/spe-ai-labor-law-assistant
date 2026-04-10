@@ -1,8 +1,6 @@
 .npmrc
 *node_modules
 *.DS_Store
-.venv
-.env
 !.env.local
 
 # Context files
@@ -11,3 +9,18 @@ requirements*
 
 # tests
 rag/db_chroma_test
+
+# Entornos virtuales
+.venv/
+env/
+venv/
+__pycache__/
+*.py[cod]
+
+# Bases de datos vectoriales (Chroma)
+**/db_chroma/
+**/db_chroma_test/
+*.sqlite3
+
+# Variables de entorno (¡Seguridad!)
+.env

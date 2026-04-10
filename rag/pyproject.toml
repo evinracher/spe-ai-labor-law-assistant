@@ -60,10 +60,11 @@ dependencies = [
     "langchain-huggingface>=1.0.0",      # HuggingFace embeddings
     "langchain-experimental>=0.3.0",     # SemanticChunker and experimental splitters
     "sentence-transformers>=3.0.0",      # Required by langchain-huggingface
+    "langsmith>=0.1.0",
 
     # --- Knowledge Graph (GraphDB / SPARQL) ---
     "SPARQLWrapper>=2.0.0",              # SPARQL endpoint client for GraphDB
-    "rdflib>=7.0.0",                     # RDF graph parsing and manipulation
+    "rdflib>=7.0.0"                     # RDF graph parsing and manipulation
 ]
 
 [project.optional-dependencies]
@@ -74,6 +75,7 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "pre-commit>=3.7.0",
+    
 ]
 
 [project.scripts]

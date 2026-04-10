@@ -30,6 +30,8 @@ from typing import Literal
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
+from langsmith import traceable
+
 
 # ====================================================================
 # Strategy Enum
@@ -180,7 +182,11 @@ class QueryTransformer:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
+    @traceable(
+        name="query_transform",
+        tags=["query-transform"],
+        metadata={"component": "QueryTransformer"}
+    )
     def transform(self, question: str) -> QueryTransformResult:
         """
         Analyze *question* and return a :class:`QueryTransformResult` with the
@@ -208,7 +214,7 @@ class QueryTransformer:
     # ------------------------------------------------------------------
     # Private strategy builders
     # ------------------------------------------------------------------
-
+    @traceable(name="strategy_direct")
     def _direct(self, question: str, reason: str) -> QueryTransformResult:
         return QueryTransformResult(
             original_query=question,
@@ -216,7 +222,7 @@ class QueryTransformer:
             strategy_reason=reason,
             effective_queries=[question],
         )
-
+    @traceable(name="strategy_hyde")
     def _hyde(self, question: str, reason: str) -> QueryTransformResult:
         """Generate a hypothetical document and use it as the retrieval query."""
         response = self._hyde_chain.invoke({"question": question})
@@ -239,7 +245,7 @@ class QueryTransformer:
             effective_queries=[hypo_doc],
             hypothetical_document=hypo_doc,
         )
-
+    @traceable(name="strategy_decomposition")
     def _decompose(
         self, question: str, reason: str, sub_queries: list[str]
     ) -> QueryTransformResult:
