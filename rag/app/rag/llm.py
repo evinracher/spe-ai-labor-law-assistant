@@ -12,18 +12,19 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from app.api.schemas import Citation, ChatResponse, Trace
-from app.core.config import settings
-
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
+
+from app.api.schemas import ChatResponse, Trace
+from app.core.config import settings
 
 if TYPE_CHECKING:
     from app.core.config import Settings
 
 
 _llm: BaseChatModel | None = None
+
 
 def get_llm() -> BaseChatModel:
     """Return the LLM singleton for the configured provider, creating it on first call."""
@@ -37,7 +38,7 @@ def get_llm() -> BaseChatModel:
             )
         elif settings.LLM_PROVIDER == "gemini":
             _llm = ChatGoogleGenerativeAI(
-                model="models/gemini-2.5-flash-lite",
+                model=settings.GEMINI_MODEL,
                 temperature=0.2,
                 google_api_key=settings.GOOGLE_API_KEY,
             )
@@ -46,7 +47,7 @@ def get_llm() -> BaseChatModel:
     return _llm
 
 
-def ask_llm(question: str, settings: "Settings") -> ChatResponse:
+def ask_llm(question: str, settings: Settings) -> ChatResponse:
     """
     Generate an LLM response
 
